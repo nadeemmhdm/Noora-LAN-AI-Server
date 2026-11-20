@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en" class="dark scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Noora AI — On-Demand Local LAN AI Server (Developed by Nadeem)</title>
+  
+  <!-- SEO, CEO, AEO & Social Meta Tags -->
+  <meta name="description" content="Noora AI: On-demand local LAN AI server for Windows 10/11. 100% CPU inference on Intel Core i5 with 4GB RAM. OpenAI-compatible API gateway across your local Wi-Fi. Developed by Nadeem.">
+  <meta name="keywords" content="Noora AI, LAN AI Server, Local LLM, llama.cpp, CPU Inference, OpenAI compatible, Windows AI Server, Nadeem">
+  <meta name="author" content="Nadeem">
+  <meta property="og:title" content="Noora AI — LAN AI Server">
+  <meta property="og:description" content="Turn your Windows laptop into a private, on-demand AI server for any device on your Wi-Fi.">
+  <meta property="og:type" content="website">
+  
+  <!-- Boxicons CSS & Fonts -->
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for fast in-page Markdown parsing without redirect -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background-color: #070B14;
+      color: #F3F4F6;
+      font-family: 'Inter', sans-serif;
+    }
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-card {
+      background: rgba(23, 31, 51, 0.65);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .doc-content h1 { font-size: 1.5rem; font-weight: 800; color: #fff; margin-bottom: 1rem; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; }
+    .doc-content h2 { font-size: 1.25rem; font-weight: 700; color: #e2e8f0; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+    .doc-content h3 { font-size: 1rem; font-weight: 600; color: #cbd5e1; margin-top: 1.25rem; margin-bottom: 0.5rem; }
+    .doc-content p { color: #94a3b8; line-height: 1.7; margin-bottom: 0.75rem; font-size: 0.875rem; }
+    .doc-content ul { list-style-type: disc; margin-left: 1.5rem; margin-bottom: 0.75rem; color: #94a3b8; font-size: 0.875rem; }
+    .doc-content ol { list-style-type: decimal; margin-left: 1.5rem; margin-bottom: 0.75rem; color: #94a3b8; font-size: 0.875rem; }
+    .doc-content li { margin-bottom: 0.25rem; }
+    .doc-content pre { background: #0f172a; padding: 1rem; border-radius: 0.75rem; overflow-x: auto; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; border: 1px solid #1e293b; margin-bottom: 1rem; color: #e2e8f0; }
+    .doc-content code { font-family: 'JetBrains Mono', monospace; background: #1e293b; padding: 0.15rem 0.4rem; border-radius: 0.25rem; font-size: 0.8rem; color: #a5b4fc; }
+    .doc-content table { width: 100%; text-align: left; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.8rem; }
+    .doc-content th { background: #1e293b; padding: 0.5rem 0.75rem; border: 1px solid #334155; color: #e2e8f0; }
+    .doc-content td { padding: 0.5rem 0.75rem; border: 1px solid #1e293b; color: #94a3b8; }
+    .doc-content blockquote { border-left: 3px solid #6366f1; padding-left: 1rem; color: #a5b4fc; margin-bottom: 1rem; }
+  </style>
+</head>
+<body class="selection:bg-indigo-500 selection:text-white antialiased min-h-screen flex flex-col">
+
+  <!-- Navigation Bar -->
+  <nav class="sticky top-0 z-50 glass-panel border-b border-slate-800/80 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3 cursor-pointer" onclick="switchMainTab('home')">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 text-white text-2xl font-bold">
+          <i class="bx bx-bot"></i>
+        </div>
+        <div>
+          <span class="text-base font-extrabold tracking-tight text-white flex items-center gap-2">
+            Noora AI
+            <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">LAN Server</span>
+          </span>
+          <span class="text-[11px] text-slate-400 block -mt-0.5">Developed by Nadeem</span>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="hidden md:flex items-center space-x-1 text-xs font-semibold">
+        <button onclick="switchMainTab('home')" id="tab-btn-home" class="px-3.5 py-2 rounded-xl text-white bg-indigo-600 transition-all">Overview</button>
+        <button onclick="switchMainTab('docs')" id="tab-btn-docs" class="px-3.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all">Documentation</button>
+        <button onclick="switchMainTab('releases')" id="tab-btn-releases" class="px-3.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all">Releases & Download</button>
+        <button onclick="switchMainTab('models')" id="tab-btn-models" class="px-3.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all">Model Set</button>
+        <button onclick="switchMainTab('connect')" id="tab-btn-connect" class="px-3.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all">Connect Devices</button>
+      </div>
+
+      <!-- GitHub Link -->
+      <a href="https://github.com/nadeemmhdm/Noora-LAN-AI-Server" target="_blank" rel="noreferrer" class="flex items-center space-x-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all shadow-md">
+        <i class="bx bxl-github text-base"></i>
+        <span>GitHub</span>
+      </a>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-6 md:p-10 space-y-10">
+
+    <!-- ================= SECTION 1: HOME / OVERVIEW ================= -->
+    <section id="sec-home" class="space-y-10">
+      <!-- Hero Banner -->
+      <div class="glass-panel p-8 md:p-12 rounded-3xl relative overflow-hidden text-center md:text-left flex flex-col md:flex-row items-center justify-between gap-8">
+        <div class="space-y-4 max-w-2xl relative z-10">
+          <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs font-semibold">
+            <i class="bx bx-check-shield"></i>
+            <span>100% Local CPU Inference • Zero Cloud Dependencies</span>
+          </div>
+          <h1 class="text-3xl md:text-5xl font-black text-white tracking-tight leading-tight">
+            Turn Any Windows Laptop Into an <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-violet-400">On-Demand Local AI Server</span>
+          </h1>
+          <p class="text-sm md:text-base text-slate-300 leading-relaxed">
+            <strong>Noora AI</strong> transforms your Intel Core i5 / 4GB RAM laptop into an OpenAI-compatible server. Connect your phone, tablet, and secondary computers over the same Wi-Fi without tunneling services or external relays.
+          </p>
+
+          <div class="flex flex-wrap items-center justify-center md:justify-start gap-3 pt-2">
+            <button onclick="switchMainTab('releases')" class="px-6 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 text-white font-semibold text-xs shadow-lg shadow-indigo-600/30 transition-all flex items-center space-x-2">
+              <i class="bx bx-download text-base"></i>
+              <span>Download Release v1.0.0</span>
+            </button>
+            <button onclick="switchMainTab('docs')" class="px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-all flex items-center space-x-2">
+              <i class="bx bx-book-open text-base"></i>
+              <span>Explore Direct Docs</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="w-full md:w-96 glass-card p-6 rounded-2xl border border-indigo-500/20 text-xs space-y-3 font-mono">
+          <div class="flex justify-between text-slate-400 pb-2 border-b border-slate-800">
+            <span>Hardware Target</span>
+            <span class="text-emerald-400">Intel i5 • 4GB RAM</span>
+          </div>
+          <div class="flex justify-between text-slate-400 pb-2 border-b border-slate-800">
+            <span>Inference Speed</span>
+            <span class="text-indigo-400">1.28s (4 CPU Cores)</span>
+          </div>
+          <div class="flex justify-between text-slate-400 pb-2 border-b border-slate-800">
+            <span>LAN API Base URL</span>
+            <span class="text-slate-300">http://192.168.x.x:8080/v1</span>
+          </div>
+          <div class="flex justify-between text-slate-400">
+            <span>Developer</span>
+            <span class="text-indigo-300 font-bold">Nadeem</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Key Architecture Highlights -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="glass-card p-6 rounded-2xl space-y-2">
+          <div class="w-10 h-10 rounded-xl bg-indigo-600/20 text-indigo-400 flex items-center justify-center text-xl mb-3">
+            <i class="bx bx-network-chart"></i>
+          </div>
+          <h3 class="text-base font-bold text-white">Private Wi-Fi / LAN Endpoint</h3>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Binds the FastAPI gateway strictly to your local private subnet (RFC 1918). External public IPs are automatically rejected.
+          </p>
+        </div>
+
+        <div class="glass-card p-6 rounded-2xl space-y-2">
+          <div class="w-10 h-10 rounded-xl bg-emerald-600/20 text-emerald-400 flex items-center justify-center text-xl mb-3">
+            <i class="bx bx-chip"></i>
+          </div>
+          <h3 class="text-base font-bold text-white">Automated CPU Thread Tuning</h3>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            Automatically detects host physical CPU cores to configure batch threads and eliminate timeouts without eating system memory.
+          </p>
+        </div>
+
+        <div class="glass-card p-6 rounded-2xl space-y-2">
+          <div class="w-10 h-10 rounded-xl bg-amber-600/20 text-amber-400 flex items-center justify-center text-xl mb-3">
+            <i class="bx bx-lock-alt"></i>
+          </div>
+          <h3 class="text-base font-bold text-white">Hashed API Keys & Telemetry</h3>
+          <p class="text-xs text-slate-400 leading-relaxed">
+            API keys are verified against SHA-256 hashes. Audit logs record latency and status codes with zero prompt or secret retention.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SECTION 2: DIRECT IN-PAGE DOCUMENTATION (NO REDIRECT) ================= -->
+    <section id="sec-docs" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            <i class="bx bx-book-content text-indigo-400"></i>
+            Interactive Documentation Reader
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">
+            Click any topic below to view the full markdown manual directly in-page without redirects.
+          </p>
+        </div>
+
+        <span class="text-xs text-indigo-400 font-mono bg-indigo-500/10 px-3 py-1.5 rounded-lg border border-indigo-500/20">
+          In-Page Direct View Active
+        </span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
+        <!-- Docs Sidebar Selector -->
+        <div class="glass-card p-3 rounded-2xl space-y-1.5 md:col-span-1">
+          <span class="text-[11px] font-bold uppercase tracking-wider text-slate-500 px-3 py-1 block">Documentation Topics</span>
+          <button onclick="loadDirectDoc('architecture')" id="doc-btn-architecture" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 text-white transition-all flex items-center space-x-2">
+            <i class="bx bx-layer"></i>
+            <span>Architecture & Design</span>
+          </button>
+          <button onclick="loadDirectDoc('api-reference')" id="doc-btn-api-reference" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-all flex items-center space-x-2">
+            <i class="bx bx-code-curly"></i>
+            <span>API Reference</span>
+          </button>
+          <button onclick="loadDirectDoc('lan-setup')" id="doc-btn-lan-setup" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-all flex items-center space-x-2">
+            <i class="bx bx-wifi"></i>
+            <span>LAN & Wi-Fi Setup</span>
+          </button>
+          <button onclick="loadDirectDoc('hardware-optimization')" id="doc-btn-hardware-optimization" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-all flex items-center space-x-2">
+            <i class="bx bx-tachometer"></i>
+            <span>Hardware & Low RAM</span>
+          </button>
+          <button onclick="loadDirectDoc('troubleshooting')" id="doc-btn-troubleshooting" class="w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-all flex items-center space-x-2">
+            <i class="bx bx-wrench"></i>
+            <span>Troubleshooting & FAQ</span>
+          </button>
+        </div>
+
+        <!-- Rendered Document Viewport -->
+        <div class="glass-card p-6 md:p-8 rounded-2xl md:col-span-3 min-h-[500px]">
+          <div id="doc-loading" class="hidden text-center py-12 text-slate-400">
+            <i class="bx bx-loader-alt animate-spin text-3xl text-indigo-400 mb-2"></i>
+            <p class="text-xs">Loading document...</p>
+          </div>
+          <div id="doc-rendered" class="doc-content"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SECTION 3: RELEASES & DOWNLOAD ================= -->
+    <section id="sec-releases" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-white flex items-center gap-2">
+            <i class="bx bx-package text-indigo-400"></i>
+            Official Releases & Distribution Packages
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">
+            Download pre-packaged portable zip or automated installation wizards.
+          </p>
+        </div>
+        <span class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold font-mono">v1.0.0 Stable</span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Release Card 1: Portable ZIP -->
+        <div class="glass-card p-6 rounded-2xl space-y-4 border border-indigo-500/30">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-base font-bold text-white">Nila-LAN-AI-Portable.zip</h3>
+              <p class="text-xs text-slate-400 mt-0.5">Standalone Portable Distribution • 26.29 MB</p>
+            </div>
+            <span class="text-xs px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 font-mono">Recommended</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Includes official Windows x64 AVX2 <code>llama-server.exe</code>, CPU runtime libraries, FastAPI gateway, and compiled React 19 UI bundle. Extract and double-click <code>run_desktop.bat</code>.
+          </p>
+          <a href="https://github.com/nadeemmhdm/Noora-LAN-AI-Server/releases/download/v1.0.0/Nila-LAN-AI-Portable.zip" class="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center justify-center space-x-2 shadow-md transition-all">
+            <i class="bx bx-download text-base"></i>
+            <span>Download Portable ZIP (v1.0.0)</span>
+          </a>
+        </div>
+
+        <!-- Release Card 2: Setup Wizard -->
+        <div class="glass-card p-6 rounded-2xl space-y-4 border border-slate-800">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="text-base font-bold text-white">Nila-LAN-AI-Setup.bat</h3>
+              <p class="text-xs text-slate-400 mt-0.5">Windows Automated Setup Script</p>
+            </div>
+            <span class="text-xs px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 font-mono">Script</span>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Automates virtualenv creation, package installations, Windows Firewall port 8080 rule configuration, and verifies model presence.
+          </p>
+          <a href="https://github.com/nadeemmhdm/Noora-LAN-AI-Server/blob/main/Nila-LAN-AI-Setup.bat" target="_blank" class="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center justify-center space-x-2 border border-slate-700 transition-all">
+            <i class="bx bx-code-alt text-base"></i>
+            <span>View Setup Script on GitHub</span>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SECTION 4: MODEL SET ================= -->
+    <section id="sec-models" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl">
+        <h2 class="text-xl font-bold text-white flex items-center gap-2">
+          <i class="bx bx-chip text-indigo-400"></i>
+          Tested & Validated GGUF Model Set
+        </h2>
+        <p class="text-xs text-slate-400 mt-1">
+          Every model in this catalog is verified for CPU inference on an Intel Core i5 with 4GB RAM.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Model 1 -->
+        <div class="glass-card p-6 rounded-2xl space-y-4 border border-indigo-500/40 bg-indigo-950/20">
+          <div class="flex items-start justify-between">
+            <h3 class="text-base font-bold text-white">Qwen 2.5 0.5B Instruct</h3>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400">Default Model</span>
+          </div>
+          <div class="space-y-1.5 text-xs text-slate-400">
+            <p><strong>Format:</strong> GGUF Q4_K_M</p>
+            <p><strong>File Size:</strong> 468 MB</p>
+            <p><strong>Runtime RAM:</strong> ~650 MB</p>
+            <p><strong>CPU Generation Time:</strong> 1.28s</p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Ultra-fast response time on CPU with near-instant first token latency. Ideal for general chat and local assistant tasks.
+          </p>
+        </div>
+
+        <!-- Model 2 -->
+        <div class="glass-card p-6 rounded-2xl space-y-4 border border-slate-800">
+          <div class="flex items-start justify-between">
+            <h3 class="text-base font-bold text-white">Qwen 2.5 1.5B Instruct</h3>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400">Coding / Logic</span>
+          </div>
+          <div class="space-y-1.5 text-xs text-slate-400">
+            <p><strong>Format:</strong> GGUF Q4_K_M</p>
+            <p><strong>File Size:</strong> 1.1 GB</p>
+            <p><strong>Runtime RAM:</strong> ~1600 MB</p>
+            <p><strong>CPU Generation Time:</strong> ~2.8s</p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Enhanced coding and reasoning accuracy while maintaining safe memory margins on a 4GB system.
+          </p>
+        </div>
+
+        <!-- Model 3 -->
+        <div class="glass-card p-6 rounded-2xl space-y-4 border border-slate-800">
+          <div class="flex items-start justify-between">
+            <h3 class="text-base font-bold text-white">Llama 3.2 1B Instruct</h3>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400">Meta Model</span>
+          </div>
+          <div class="space-y-1.5 text-xs text-slate-400">
+            <p><strong>Format:</strong> GGUF Q4_K_M</p>
+            <p><strong>File Size:</strong> 800 MB</p>
+            <p><strong>Runtime RAM:</strong> ~1200 MB</p>
+            <p><strong>CPU Generation Time:</strong> ~2.1s</p>
+          </div>
+          <p class="text-xs text-slate-300 leading-relaxed">
+            Meta's compact instruction-tuned model. Highly capable for summarization and agent workflows.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= SECTION 5: CONNECT PLATFORMS ================= -->
+    <section id="sec-connect" class="hidden space-y-6">
+      <div class="glass-panel p-6 rounded-2xl">
+        <h2 class="text-xl font-bold text-white flex items-center gap-2">
+          <i class="bx bx-broadcast text-indigo-400"></i>
+          Connect Clients on Your Local Network
+        </h2>
+        <p class="text-xs text-slate-400 mt-1">
+          Copy-paste ready snippets for mobile apps, terminal, and scripts on the same Wi-Fi.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Python -->
+        <div class="glass-card p-6 rounded-2xl space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i class="bx bxl-python text-lg text-indigo-400"></i>
+              <span>Python (OpenAI SDK)</span>
+            </h3>
+            <button onclick="copySnippet('code-py')" class="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 text-xs hover:bg-slate-700">Copy</button>
+          </div>
+          <pre id="code-py" class="text-xs font-mono p-4 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 overflow-x-auto">from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://192.168.1.100:8080/v1",  # Replace with laptop LAN IP
+    api_key="sk-local-noora-default-lan-key"
+)
+
+response = client.chat.completions.create(
+    model="local-ai",
+    messages=[{"role": "user", "content": "Hello Noora!"}]
+)
+
+print(response.choices[0].message.content)</pre>
+        </div>
+
+        <!-- Chatbox App -->
+        <div class="glass-card p-6 rounded-2xl space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i class="bx bx-message-square-dots text-lg text-emerald-400"></i>
+              <span>Chatbox Mobile & Desktop App</span>
+            </h3>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold">Free</span>
+          </div>
+          <ul class="text-xs text-slate-300 space-y-2 list-disc list-inside leading-relaxed">
+            <li>Download <strong>Chatbox</strong> on iPhone, Android, or secondary laptop.</li>
+            <li>Settings → <strong>Model Provider</strong> → Choose <strong>OpenAI API</strong>.</li>
+            <li><strong>API Host:</strong> <code>http://&lt;HOST_IP&gt;:8080/v1</code></li>
+            <li><strong>API Key:</strong> <code>sk-local-noora-default-lan-key</code></li>
+            <li><strong>Model:</strong> <code>local-ai</code></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="mt-auto border-t border-slate-800/80 p-6 glass-panel text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>
+        <span class="font-bold text-slate-300">Noora AI</span> — LAN AI Server • Engineered by <span class="text-indigo-400 font-semibold">Nadeem</span>
+      </div>
+      <div>
+        100% On-Device CPU Inference • Privacy Guaranteed • Apache / MIT
+      </div>
+    </div>
+  </footer>
+
+  <!-- Embedded Markdown Cache for Direct In-Page View (Zero Redirects) -->
+  <script>
+    const docsCache = {
+      'architecture': `# Noora AI Architecture & System Design\\n\\n**Author:** Nadeem  \\n**Application:** Noora AI LAN Server (v1.0.0)  \\n**Target Architecture:** Windows 10/11 x64, Intel Core i5 CPU, 4GB+ RAM\\n\\n---\\n\\n## 1. High-Level Architecture Overview\\n\\nNoora AI is an on-demand, local-first artificial intelligence gateway. It converts a standard Windows laptop into an OpenAI-compatible inference server accessible across your local area network (LAN / Wi-Fi) without relying on external cloud infrastructure, reverse tunnels, or third-party relays.\\n\\n- **Gateway:** FastAPI (Python 3.10+) serving OpenAI endpoints at \`/v1/chat/completions\`.\\n- **Inference Engine:** \`llama-server.exe\` child process bound strictly to loopback \`127.0.0.1:8081\`.\\n- **Subnet Restriction:** Strictly filters requests to RFC 1918 private IP ranges.\\n- **Hardware Tuning:** Physical core allocation preventing CPU thrashing on 4-core Intel i5 machines.`,
+      
+      'api-reference': `# Noora AI API Reference Manual\\n\\n**Author:** Nadeem  \\n**Base URL Format:** \`http://<LAN_IP>:8080/v1\`  \\n**Authentication:** \`Authorization: Bearer <API_KEY>\`\\n\\n---\\n\\n## 1. Endpoints\\n\\n### \`GET /v1/models\`\\nReturns all available local GGUF models.\\n\\n### \`POST /v1/chat/completions\`\\nGenerates streaming or synchronous chat responses with Noora AI persona injected.\\n\\n### \`GET /health\`\\nProvides real-time server health and auto-detected CPU specifications.`,
+
+      'lan-setup': `# Local Network (LAN) & Multi-Device Setup Guide\\n\\n**Author:** Nadeem\\n\\n---\\n\\n## 1. How to Connect Another Device\\n\\n1. Connect your phone or secondary PC to the **same Wi-Fi** as your laptop.\\n2. Open your client app (such as Chatbox) and set:\\n   - **API Host:** \`http://<LAPTOP_LAN_IP>:8080/v1\`\\n   - **API Key:** \`sk-local-noora-default-lan-key\`\\n   - **Model:** \`local-ai\`\\n3. Click Save and chat directly with your laptop's AI!`,
+
+      'hardware-optimization': `# Hardware Optimization & Low-Footprint Tuning\\n\\n**Author:** Nadeem  \\n**Target Hardware:** Intel Core i5 CPU, 4GB System RAM, No GPU\\n\\n---\\n\\n## 1. Automated Processor Tuning\\n\\nNoora AI detects physical CPU cores and allocates exact threads to avoid hyperthreading context switching. Generation latency is reduced to **1.28 seconds** on standard dual/quad-core processors.\\n\\n## 2. Memory Safeguards\\n\\nPre-flight checks verify that at least 450MB of RAM is available before loading any model, completely avoiding Windows lockups.`,
+
+      'troubleshooting': `# Troubleshooting & Frequently Asked Questions\\n\\n**Author:** Nadeem\\n\\n---\\n\\n## 1. HTTP 401 Unauthorized\\nEnsure you pass the full key \`sk-local-noora-default-lan-key\` in the Authorization header (\`Bearer <KEY>\`).\\n\\n## 2. Timeouts\\nEnable \`"stream": true\` in your client for instant token streaming within ~120ms.`
+    };
+
+    function switchMainTab(tabId) {
+      const tabs = ['home', 'docs', 'releases', 'models', 'connect'];
+      tabs.forEach(t => {
+        const sec = document.getElementById('sec-' + t);
+        const btn = document.getElementById('tab-btn-' + t);
+        if (sec) sec.classList.toggle('hidden', t !== tabId);
+        if (btn) {
+          if (t === tabId) {
+            btn.className = "px-3.5 py-2 rounded-xl text-white bg-indigo-600 transition-all font-semibold";
+          } else {
+            btn.className = "px-3.5 py-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-all";
+          }
+        }
+      });
+      if (tabId === 'docs') {
+        loadDirectDoc('architecture');
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function loadDirectDoc(docName) {
+      const docRendered = document.getElementById('doc-rendered');
+      const docLoading = document.getElementById('doc-loading');
+
+      // Update button active states
+      ['architecture', 'api-reference', 'lan-setup', 'hardware-optimization', 'troubleshooting'].forEach(d => {
+        const b = document.getElementById('doc-btn-' + d);
+        if (b) {
+          if (d === docName) {
+            b.className = "w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 text-white transition-all flex items-center space-x-2";
+          } else {
+            b.className = "w-full text-left px-3.5 py-2.5 rounded-xl text-xs font-semibold text-slate-300 hover:bg-slate-800 transition-all flex items-center space-x-2";
+          }
+        }
+      });
+
+      // Try fetching the actual .md file directly from the repo / docs folder
+      docLoading.classList.remove('hidden');
+      docRendered.classList.add('hidden');
+
+      try {
+        const res = await fetch(`${docName}.md`);
+        if (res.ok) {
+          const text = await res.text();
+          docRendered.innerHTML = marked.parse(text);
+        } else {
+          // Fallback to embedded cache
+          docRendered.innerHTML = marked.parse(docsCache[docName] || '# Document Not Found');
+        }
+      } catch (e) {
+        // Fallback to embedded cache
+        docRendered.innerHTML = marked.parse(docsCache[docName] || '# Document Not Found');
+      } finally {
+        docLoading.classList.add('hidden');
+        docRendered.classList.remove('hidden');
+      }
+    }
+
+    function copySnippet(elementId) {
+      const el = document.getElementById(elementId);
+      if (el) {
+        navigator.clipboard.writeText(el.innerText);
+        alert('Code snippet copied to clipboard!');
+      }
+    }
+
+    // Default initialization
+    document.addEventListener('DOMContentLoaded', () => {
+      loadDirectDoc('architecture');
+    });
+  </script>
+</body>
+</html>

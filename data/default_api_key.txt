@@ -1,0 +1,2 @@
+Default API Key (generated during first launch):
+sk-local-ef1173049682c084eefab48a041b0640
