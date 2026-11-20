@@ -12,11 +12,12 @@ import httpx
 
 from backend.config import (
     LLAMA_SERVER_EXE, DEFAULT_INFERENCE_PORT, LOOPBACK_HOST,
-    MIN_FREE_RAM_MB, DEFAULT_CPU_THREADS, DEFAULT_CONTEXT_SIZE,
+    MIN_FREE_RAM_MB, DEFAULT_CPU_THREADS, DEFAULT_BATCH_THREADS,
+    DEFAULT_CONTEXT_SIZE, DEFAULT_BATCH_SIZE, DEFAULT_UBATCH_SIZE,
     DEFAULT_PARALLEL_SLOTS, AI_NAME, DEVELOPER,
-    CPU_PHYSICAL_CORES, CPU_LOGICAL_CORES, CPU_MODEL_NAME
+    CPU_PHYSICAL_CORES, CPU_LOGICAL_CORES, CPU_MODEL_NAME, NOORA_MODELS
 )
-from backend.database import log_system_event, get_db_connection
+from backend.database import log_system_event, get_db_connection, resolve_model_filename
 
 class LlamaEngineManager:
     _instance = None
@@ -35,6 +36,7 @@ class LlamaEngineManager:
         self.status = "OFFLINE"  # OFFLINE, STARTING, ONLINE, STOPPING, ERROR
         self.active_model_path: Optional[str] = None
         self.active_model_name: Optional[str] = None
+        self.active_model_id: Optional[str] = None
         self.port = DEFAULT_INFERENCE_PORT
         self.host = LOOPBACK_HOST
         self.error_message: Optional[str] = None
@@ -44,6 +46,8 @@ class LlamaEngineManager:
         self.stderr_thread = None
         self.recent_logs: list[str] = []
         self.threads_used = DEFAULT_CPU_THREADS
+        self.batch_threads_used = DEFAULT_BATCH_THREADS
+        self.context_size_used = DEFAULT_CONTEXT_SIZE
 
     def get_stats(self) -> Dict[str, Any]:
         memory_usage_mb = 0.0
@@ -66,7 +70,8 @@ class LlamaEngineManager:
         vm = psutil.virtual_memory()
         return {
             "status": self.status,
-            "active_model": self.active_model_name or "None",
+            "active_model": self.active_model_name or "Noora N.1 Faster",
+            "active_model_id": self.active_model_id or "N.1 Faster",
             "active_model_path": self.active_model_path,
             "uptime_seconds": uptime_sec,
             "engine_memory_mb": memory_usage_mb,
@@ -80,6 +85,8 @@ class LlamaEngineManager:
             "cpu_physical_cores": CPU_PHYSICAL_CORES,
             "cpu_logical_cores": CPU_LOGICAL_CORES,
             "threads_used": self.threads_used,
+            "batch_threads_used": self.batch_threads_used,
+            "context_size": self.context_size_used,
             "port": self.port,
             "host": self.host,
             "error_message": self.error_message
@@ -90,13 +97,13 @@ class LlamaEngineManager:
             return False, f"Model file not found: {model_file_path.name}"
         
         file_size_mb = model_file_path.stat().st_size / (1024 * 1024)
-        required_free_ram = file_size_mb + 200
+        required_free_ram = file_size_mb + 250
         available_ram = psutil.virtual_memory().available / (1024 * 1024)
 
         if available_ram < MIN_FREE_RAM_MB:
             return False, f"Critically low system memory: Only {available_ram:.0f} MB available (Minimum required: {MIN_FREE_RAM_MB} MB)."
         
-        if available_ram < required_free_ram * 0.7:
+        if available_ram < required_free_ram * 0.65:
             return False, f"Insufficient memory to safely load {model_file_path.name}. Need ~{required_free_ram:.0f} MB, but only {available_ram:.0f} MB is available."
         
         return True, "RAM check passed."
@@ -104,8 +111,16 @@ class LlamaEngineManager:
     def start_engine(self, model_path: Optional[str] = None, threads: Optional[int] = None, 
                      context_size: Optional[int] = None) -> tuple[bool, str]:
         with self.lock:
+            # If target model is specified and already running with that model, return immediately
+            if model_path and self.active_model_path == str(Path(model_path).resolve()) and self.process and self.process.poll() is None:
+                return True, "Engine is already running requested model."
+
+            # If running a different model, stop first
             if self.process and self.process.poll() is None:
-                return True, "Engine is already running."
+                if model_path and self.active_model_path != str(Path(model_path).resolve()):
+                    self._stop_internal()
+                else:
+                    return True, "Engine is already running."
 
             if not LLAMA_SERVER_EXE.exists():
                 self.status = "ERROR"
@@ -118,18 +133,23 @@ class LlamaEngineManager:
             target_path = None
             if model_path:
                 target_path = Path(model_path)
+                meta = NOORA_MODELS.get(target_path.name, {})
+                self.active_model_name = meta.get("name", target_path.stem.replace("-", " ").title())
+                self.active_model_id = meta.get("id", target_path.stem)
             else:
                 conn = get_db_connection()
                 cur = conn.cursor()
-                cur.execute("SELECT path, name FROM models WHERE is_active = 1 LIMIT 1")
+                cur.execute("SELECT path, name, model_id, filename FROM models WHERE is_active = 1 LIMIT 1")
                 row = cur.fetchone()
                 if not row:
-                    cur.execute("SELECT path, name FROM models LIMIT 1")
+                    cur.execute("SELECT path, name, model_id, filename FROM models LIMIT 1")
                     row = cur.fetchone()
                 conn.close()
                 if row:
                     target_path = Path(row["path"])
-                    self.active_model_name = row["name"]
+                    meta = NOORA_MODELS.get(row["filename"], {})
+                    self.active_model_name = meta.get("name", row["name"])
+                    self.active_model_id = meta.get("id", row["model_id"] or "N.1 Faster")
 
             if not target_path or not target_path.exists():
                 self.status = "ERROR"
@@ -147,13 +167,18 @@ class LlamaEngineManager:
 
             self.status = "STARTING"
             self.error_message = None
-            self.active_model_path = str(target_path)
-            self.active_model_name = target_path.stem.replace("-", " ").title()
+            self.active_model_path = str(target_path.resolve())
 
-            # Optimal threads for CPU: use physical core count
+            # Configure optimal threads and context size
             self.threads_used = threads or DEFAULT_CPU_THREADS
+            self.batch_threads_used = DEFAULT_BATCH_THREADS
+            self.context_size_used = context_size or DEFAULT_CONTEXT_SIZE
+
             th = str(self.threads_used)
-            ctx = str(context_size or DEFAULT_CONTEXT_SIZE)
+            tb = str(self.batch_threads_used)
+            ctx = str(self.context_size_used)
+            b = str(DEFAULT_BATCH_SIZE)
+            ub = str(DEFAULT_UBATCH_SIZE)
 
             cmd = [
                 str(LLAMA_SERVER_EXE.resolve()),
@@ -161,15 +186,15 @@ class LlamaEngineManager:
                 "--host", self.host,
                 "--port", str(self.port),
                 "-t", th,
-                "-tb", th,
+                "-tb", tb,
                 "-c", ctx,
-                "-b", "512",
-                "-ub", "256",
+                "-b", b,
+                "-ub", ub,
                 "-np", str(DEFAULT_PARALLEL_SLOTS),
                 "--log-disable"
             ]
 
-            log_system_event("INFO", "INFERENCE", f"Starting engine with model {target_path.name} (threads={th}, ctx={ctx})")
+            log_system_event("INFO", "INFERENCE", f"Starting {self.active_model_name} (threads={th}, batch_threads={tb}, ctx={ctx})")
 
             try:
                 creation_flags = 0
@@ -208,7 +233,7 @@ class LlamaEngineManager:
 
         # Wait and verify engine health
         start_time = time.time()
-        timeout = 25
+        timeout = 30
         while time.time() - start_time < timeout:
             if self.process.poll() is not None:
                 self.status = "ERROR"
@@ -223,7 +248,7 @@ class LlamaEngineManager:
                     if resp.status_code == 200:
                         self.status = "ONLINE"
                         self.started_at = time.time()
-                        log_system_event("INFO", "INFERENCE", f"AI Engine is ONLINE on {self.host}:{self.port}")
+                        log_system_event("INFO", "INFERENCE", f"AI Engine is ONLINE with {self.active_model_name} on {self.host}:{self.port}")
                         return True, "AI Engine started successfully."
             except Exception:
                 pass
@@ -234,6 +259,31 @@ class LlamaEngineManager:
         self.error_message = "Engine startup timed out."
         return False, "Engine startup timed out."
 
+    def _stop_internal(self):
+        if not self.process or self.process.poll() is not None:
+            self.status = "OFFLINE"
+            self.process = None
+            return
+
+        self.status = "STOPPING"
+        try:
+            pid = self.process.pid
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                if sys.platform == "win32":
+                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    self.process.kill()
+                self.process.wait(timeout=2.0)
+        except Exception as e:
+            pass
+        self.process = None
+        self.status = "OFFLINE"
+        self.started_at = None
+
     def stop_engine(self) -> tuple[bool, str]:
         with self.lock:
             if not self.process or self.process.poll() is not None:
@@ -241,27 +291,8 @@ class LlamaEngineManager:
                 self.process = None
                 return True, "Engine is already offline."
 
-            self.status = "STOPPING"
             log_system_event("INFO", "INFERENCE", "Stopping AI Engine...")
-
-            try:
-                pid = self.process.pid
-                self.process.terminate()
-                try:
-                    self.process.wait(timeout=4.0)
-                except subprocess.TimeoutExpired:
-                    if sys.platform == "win32":
-                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], 
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    else:
-                        self.process.kill()
-                    self.process.wait(timeout=2.0)
-            except Exception as e:
-                log_system_event("WARNING", "INFERENCE", f"Error during engine shutdown: {e}")
-
-            self.process = None
-            self.status = "OFFLINE"
-            self.started_at = None
+            self._stop_internal()
             log_system_event("INFO", "INFERENCE", "AI Engine stopped. Model memory released.")
             return True, "Engine stopped successfully."
 

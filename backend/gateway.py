@@ -8,19 +8,19 @@ from typing import Optional, List, Dict, Any, Union
 from pathlib import Path
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, Request, HTTPException, Depends, Header, BackgroundTasks
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from backend.config import (
     APP_NAME, AI_NAME, DEVELOPER, VERSION,
     DEFAULT_GATEWAY_PORT, DEFAULT_INFERENCE_PORT, LOOPBACK_HOST,
-    MODELS_DIR, TRUSTED_MODELS_CATALOG, STATIC_DIR,
-    CPU_PHYSICAL_CORES, CPU_LOGICAL_CORES, CPU_MODEL_NAME
+    MODELS_DIR, TRUSTED_MODELS_CATALOG, NOORA_MODELS, STATIC_DIR,
+    CPU_PHYSICAL_CORES, CPU_LOGICAL_CORES, CPU_MODEL_NAME, DEFAULT_CONTEXT_SIZE
 )
 from backend.database import (
     init_db, get_db_connection, verify_api_key, generate_api_key,
-    get_active_working_key, log_api_request, log_system_event,
+    get_active_working_key, resolve_model_filename, log_api_request, log_system_event,
     is_ip_blocked, set_ip_blocked_status, get_server_setting,
     update_server_setting, prune_old_logs
 )
@@ -39,7 +39,6 @@ app = FastAPI(
     description=f"{APP_NAME} - Developed by {DEVELOPER}"
 )
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -48,7 +47,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory rate-limiter: {key_id: [timestamps]}
 _rate_limits: Dict[int, List[float]] = {}
 _active_downloads: Dict[str, Dict[str, Any]] = {}
 
@@ -67,25 +65,22 @@ def check_rate_limit(key_id: int, rpm_limit: int) -> bool:
 async def authenticate_request(request: Request, authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # 1. Check IP blocklist
     if is_ip_blocked(client_ip):
         log_api_request(client_ip, request.url.path, request.method, 403, 0.0, error_message="IP is blocked")
         raise HTTPException(status_code=403, detail="Access denied: Your IP address is blocked.")
 
-    # 2. Check LAN Subnet Restriction
     lan_only = get_server_setting("lan_access_only", "true").lower() == "true"
     if lan_only and not is_private_lan_ip(client_ip):
         log_api_request(client_ip, request.url.path, request.method, 403, 0.0, error_message="Non-LAN IP access blocked")
         raise HTTPException(status_code=403, detail="Access restricted to local LAN subnet.")
 
-    # 3. Handle Localhost / Web UI Playground Convenience
+    # Localhost auto-auth convenience
     is_localhost = client_ip in ["127.0.0.1", "::1", "localhost"]
     if is_localhost and (not authorization or authorization in ["Bearer auto", "Bearer local-dev", "Bearer test-key"]):
         active_key = get_active_working_key()
         if active_key:
             return active_key
 
-    # 4. Authenticate Bearer API Key
     if not authorization or not authorization.startswith("Bearer "):
         log_api_request(client_ip, request.url.path, request.method, 401, 0.0, error_message="Missing or malformed Authorization header")
         raise HTTPException(
@@ -102,8 +97,7 @@ async def authenticate_request(request: Request, authorization: Optional[str] = 
             detail="Unauthorized: Invalid, expired, or revoked API key. Copy the active key from the Noora AI dashboard."
         )
 
-    # 5. Check Rate Limits
-    rpm_limit = key_record.get("rate_limit_rpm", 120)
+    rpm_limit = key_record.get("rate_limit_rpm", 240)
     if not check_rate_limit(key_record["id"], rpm_limit):
         log_api_request(client_ip, request.url.path, request.method, 429, 0.0, api_key_name=key_record["name"], error_message="Rate limit exceeded")
         raise HTTPException(status_code=429, detail="Too Many Requests: Rate limit exceeded for this API key.")
@@ -117,23 +111,23 @@ class ChatMessage(BaseModel):
     content: str
 
 class ChatCompletionRequest(BaseModel):
-    model: Optional[str] = "local-ai"
+    model: Optional[str] = "N.1 Faster"
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 0.95
-    max_tokens: Optional[int] = 1024
+    max_tokens: Optional[int] = 2048
     stream: Optional[bool] = False
 
 class CompletionRequest(BaseModel):
-    model: Optional[str] = "local-ai"
+    model: Optional[str] = "N.1 Faster"
     prompt: str
-    max_tokens: Optional[int] = 512
+    max_tokens: Optional[int] = 1024
     temperature: Optional[float] = 0.7
     stream: Optional[bool] = False
 
 class KeyCreateRequest(BaseModel):
     name: str
-    rate_limit_rpm: Optional[int] = 120
+    rate_limit_rpm: Optional[int] = 240
 
 class ModelDownloadRequest(BaseModel):
     catalog_id: str
@@ -162,14 +156,18 @@ async def health_check():
         "version": VERSION,
         "server_status": engine_stats["status"],
         "active_model": engine_stats["active_model"],
+        "active_model_id": engine_stats["active_model_id"],
         "lan_ip": lan_ip,
         "api_port": port,
         "base_url": f"http://{lan_ip}:{port}/v1",
+        "models": ["N.1 Faster", "N.1 Pro", "N.1 Core"],
         "hardware": {
             "cpu_model": CPU_MODEL_NAME,
             "physical_cores": CPU_PHYSICAL_CORES,
             "logical_cores": CPU_LOGICAL_CORES,
-            "recommended_threads": CPU_PHYSICAL_CORES
+            "threads_used": engine_stats.get("threads_used", 4),
+            "batch_threads_used": engine_stats.get("batch_threads_used", 8),
+            "context_size": engine_stats.get("context_size", DEFAULT_CONTEXT_SIZE)
         }
     }
 
@@ -213,41 +211,506 @@ async def get_server_status():
 
 @app.get("/api/hardware")
 async def get_hardware_info():
+    stats = engine.get_stats()
     return {
         "cpu_model": CPU_MODEL_NAME,
         "physical_cores": CPU_PHYSICAL_CORES,
         "logical_cores": CPU_LOGICAL_CORES,
-        "recommended_threads": CPU_PHYSICAL_CORES,
-        "system_ram_gb": round(engine.get_stats()["system_ram_total_mb"] / 1024, 2),
-        "available_ram_gb": round(engine.get_stats()["system_ram_free_mb"] / 1024, 2)
+        "threads_used": stats.get("threads_used", 4),
+        "batch_threads_used": stats.get("batch_threads_used", 8),
+        "system_ram_gb": round(stats["system_ram_total_mb"] / 1024, 2),
+        "available_ram_gb": round(stats["system_ram_free_mb"] / 1024, 2)
     }
+
+# ----------------- V1 Landing & Status Page -----------------
+
+def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model: str, server_status: str, cpu_model: str) -> str:
+    base_url = f"http://{lan_ip}:{port}/v1"
+    is_online = (server_status == "ONLINE")
+    status_badge_class = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" if is_online else "bg-amber-500/20 text-amber-400 border-amber-500/30"
+    status_dot_class = "bg-emerald-400 animate-pulse" if is_online else "bg-amber-400"
+    status_text = "Server Online & Ready" if is_online else f"Server {server_status}"
+
+    return f"""<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Noora AI — LAN Server (Developed & Trained by Nadeem)</title>
+  <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {{
+      darkMode: 'class',
+      theme: {{
+        extend: {{
+          fontFamily: {{
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }}
+        }}
+      }}
+    }}
+  </script>
+  <style>
+    body {{
+      background-color: #070B14;
+      color: #F3F4F6;
+      font-family: 'Inter', sans-serif;
+    }}
+    .glass-panel {{
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }}
+    .glass-card {{
+      background: rgba(23, 31, 51, 0.65);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }}
+  </style>
+</head>
+<body class="min-h-screen flex flex-col p-4 sm:p-6 md:p-10 selection:bg-indigo-500 selection:text-white">
+  <div class="max-w-5xl w-full mx-auto space-y-6">
+
+    <!-- Top Header -->
+    <header class="glass-panel p-5 sm:p-6 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div class="flex items-center space-x-3.5">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/30 text-white text-2xl font-bold">
+          <i class="bx bx-bot"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-xl sm:text-2xl font-black text-white tracking-tight">Noora AI</h1>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">LAN Server</span>
+          </div>
+          <p class="text-xs text-slate-400 mt-0.5">
+            Engineered, Developed & Trained by <span class="text-indigo-400 font-bold">Nadeem</span>
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-end">
+        <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl border font-medium text-xs {status_badge_class}">
+          <span class="w-2 h-2 rounded-full {status_dot_class}"></span>
+          <span>{status_text}</span>
+        </div>
+        <a href="/" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all flex items-center space-x-1.5 shadow-sm">
+          <i class="bx bx-tachometer text-base"></i>
+          <span>Full Dashboard</span>
+        </a>
+      </div>
+    </header>
+
+    <!-- LAN Access Credentials Card -->
+    <div class="glass-panel p-6 rounded-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-base font-bold text-white flex items-center gap-2">
+          <i class="bx bx-wifi text-indigo-400 text-lg"></i>
+          LAN Connection Endpoint & Active API Key
+        </h2>
+        <span class="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+          Ready to Connect
+        </span>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <!-- Base URL -->
+        <div class="glass-card p-4 rounded-xl border border-indigo-500/30 space-y-2">
+          <span class="text-slate-400 font-medium block">OpenAI-Compatible Base URL</span>
+          <div class="flex items-center space-x-2">
+            <input type="text" readOnly id="input-base-url" value="{base_url}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono text-slate-200 select-all focus:outline-none text-xs">
+            <button onclick="copyField('input-base-url', 'btn-copy-url')" id="btn-copy-url" class="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold whitespace-nowrap transition-all flex items-center space-x-1">
+              <i class="bx bx-copy"></i>
+              <span>Copy</span>
+            </button>
+          </div>
+          <p class="text-[11px] text-slate-500">Accessible from any phone, tablet, or PC connected to this Wi-Fi network.</p>
+        </div>
+
+        <!-- Active API Key -->
+        <div class="glass-card p-4 rounded-xl border border-amber-500/30 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400 font-medium block">Active Working API Key</span>
+            <span class="text-[10px] text-amber-400 font-semibold px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20">Auto-Authenticated</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <input type="text" readOnly id="input-api-key" value="{active_key}" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono text-amber-300 select-all focus:outline-none text-xs">
+            <button onclick="copyField('input-api-key', 'btn-copy-key')" id="btn-copy-key" class="px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold whitespace-nowrap transition-all flex items-center space-x-1">
+              <i class="bx bx-copy"></i>
+              <span>Copy Key</span>
+            </button>
+          </div>
+          <p class="text-[11px] text-slate-500">Provide in <code>Authorization: Bearer &lt;API_KEY&gt;</code> header.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Capability-Based Models Suite -->
+    <div class="space-y-3">
+      <div class="flex items-center justify-between">
+        <h3 class="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+          <i class="bx bx-chip text-indigo-400"></i>
+          Noora Model Suite (Developed & Trained by Nadeem)
+        </h3>
+        <span class="text-xs text-indigo-400 font-mono font-medium">Active: {active_model}</span>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <!-- Model 1: N.1 Faster -->
+        <div class="glass-card p-4 rounded-xl border border-indigo-500/40 bg-indigo-950/20 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30">N.1 Faster</span>
+            <span class="text-[10px] text-indigo-300 font-semibold">Speed / Fast</span>
+          </div>
+          <h4 class="text-sm font-bold text-white">Noora N.1 Faster</h4>
+          <p class="text-[11px] text-slate-400 leading-relaxed">
+            Ultra-low latency CPU inference (~1.2s response). Perfect for everyday chat, quick Q&A, and mobile apps.
+          </p>
+          <div class="pt-1 text-[10px] text-slate-500 font-mono">Model ID: <code>N.1 Faster</code></div>
+        </div>
+
+        <!-- Model 2: N.1 Pro -->
+        <div class="glass-card p-4 rounded-xl border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-mono font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/30">N.1 Pro</span>
+            <span class="text-[10px] text-indigo-300 font-semibold">Logic & Code</span>
+          </div>
+          <h4 class="text-sm font-bold text-white">Noora N.1 Pro Reasoning</h4>
+          <p class="text-[11px] text-slate-400 leading-relaxed">
+            Enhanced logic, coding assistance, and multi-step reasoning while staying lightweight on 4GB RAM.
+          </p>
+          <div class="pt-1 text-[10px] text-slate-500 font-mono">Model ID: <code>N.1 Pro</code></div>
+        </div>
+
+        <!-- Model 3: N.1 Core -->
+        <div class="glass-card p-4 rounded-xl border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">N.1 Core</span>
+            <span class="text-[10px] text-amber-300 font-semibold">Balanced</span>
+          </div>
+          <h4 class="text-sm font-bold text-white">Noora N.1 Core</h4>
+          <p class="text-[11px] text-slate-400 leading-relaxed">
+            Balanced versatility and general knowledge. Consistent accuracy across diverse questions.
+          </p>
+          <div class="pt-1 text-[10px] text-slate-500 font-mono">Model ID: <code>N.1 Core</code></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Test Chat Console Directly on this page -->
+    <div class="glass-panel p-6 rounded-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <i class="bx bx-message-rounded-dots text-indigo-400 text-lg"></i>
+          Test Prompt Directly in Browser
+        </h3>
+        <div class="flex items-center space-x-2 text-xs">
+          <span class="text-slate-400 hidden sm:inline">Select Model:</span>
+          <select id="chat-model-select" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs font-semibold focus:outline-none">
+            <option value="N.1 Faster">Noora N.1 Faster (Fast)</option>
+            <option value="N.1 Pro">Noora N.1 Pro (Reasoning)</option>
+            <option value="N.1 Core">Noora N.1 Core (Balanced)</option>
+            <option value="local-ai">local-ai (Active)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="relative">
+          <textarea id="chat-prompt-input" rows="2" placeholder="Ask Noora a question (e.g. 'Who are you and who trained you?')" class="w-full bg-slate-900/90 border border-slate-700 rounded-xl p-3.5 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 resize-none font-sans"></textarea>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-slate-500 flex items-center gap-1">
+            <i class="bx bx-bolt-circle text-indigo-400"></i>
+            100% CPU inference on Intel i5
+          </span>
+          <button onclick="sendTestChat()" id="btn-send-chat" class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs transition-all flex items-center space-x-1.5 shadow-md active:scale-95">
+            <i class="bx bx-send"></i>
+            <span>Send Prompt</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Response Area -->
+      <div id="chat-response-container" class="hidden p-4 rounded-xl bg-slate-900 border border-slate-800 text-sm font-sans space-y-2">
+        <div class="flex items-center justify-between text-xs text-indigo-400 font-semibold border-b border-slate-800/80 pb-2">
+          <div class="flex items-center space-x-1.5">
+            <i class="bx bx-bot"></i>
+            <span>Noora Response (<span id="resp-model-label">N.1 Faster</span>):</span>
+          </div>
+          <span id="resp-latency" class="font-mono text-slate-400 text-[11px]"></span>
+        </div>
+        <div id="chat-response-text" class="text-slate-200 whitespace-pre-wrap leading-relaxed pt-1"></div>
+      </div>
+    </div>
+
+    <!-- Quick Integration Guide Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+      <!-- Chatbox Setup -->
+      <div class="glass-card p-5 rounded-xl space-y-2 border border-slate-800">
+        <div class="flex items-center space-x-2 text-indigo-400 font-bold text-sm">
+          <i class="bx bx-mobile-alt text-lg"></i>
+          <span>Use with Chatbox App (Mobile / Desktop)</span>
+        </div>
+        <ol class="list-decimal list-inside space-y-1 text-slate-300 leading-relaxed pt-1">
+          <li>Download free <strong>Chatbox</strong> app on your phone/PC.</li>
+          <li>Set Provider to <strong>OpenAI API</strong>.</li>
+          <li><strong>API Host:</strong> <code class="text-indigo-300">{base_url}</code></li>
+          <li><strong>API Key:</strong> <code class="text-amber-300">{active_key}</code></li>
+          <li><strong>Model:</strong> <code class="text-emerald-300">N.1 Faster</code> (or <code>local-ai</code>)</li>
+        </ol>
+      </div>
+
+      <!-- Python SDK -->
+      <div class="glass-card p-5 rounded-xl space-y-2 border border-slate-800">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2 text-indigo-400 font-bold text-sm">
+            <i class="bx bxl-python text-lg"></i>
+            <span>Python (OpenAI SDK)</span>
+          </div>
+          <button onclick="copyPythonCode()" id="btn-copy-py" class="text-[11px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 border border-slate-700">Copy Code</button>
+        </div>
+        <pre id="py-snippet" class="p-2.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px] text-slate-300 overflow-x-auto leading-relaxed">from openai import OpenAI
+client = OpenAI(
+    base_url="{base_url}",
+    api_key="{active_key}"
+)
+res = client.chat.completions.create(
+    model="N.1 Faster",
+    messages=[{{"role": "user", "content": "Hello Noora!"}}]
+)
+print(res.choices[0].message.content)</pre>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="text-center text-xs text-slate-500 py-4 border-t border-slate-800/80">
+      <p>Noora AI LAN Server • Developed & Trained by <span class="text-indigo-400 font-semibold">Nadeem</span> • 100% On-Device CPU Inference</p>
+    </footer>
+
+  </div>
+
+  <script>
+    function copyField(inputId, btnId) {{
+      const input = document.getElementById(inputId);
+      const btn = document.getElementById(btnId);
+      if (input) {{
+        navigator.clipboard.writeText(input.value);
+        if (btn) {{
+          const origHtml = btn.innerHTML;
+          btn.innerHTML = '<i class="bx bx-check"></i><span>Copied!</span>';
+          setTimeout(() => {{ btn.innerHTML = origHtml; }}, 2000);
+        }}
+      }}
+    }}
+
+    function copyPythonCode() {{
+      const snippet = document.getElementById('py-snippet');
+      const btn = document.getElementById('btn-copy-py');
+      if (snippet) {{
+        navigator.clipboard.writeText(snippet.innerText);
+        if (btn) {{
+          btn.innerText = 'Copied!';
+          setTimeout(() => {{ btn.innerText = 'Copy Code'; }}, 2000);
+        }}
+      }}
+    }}
+
+    async function sendTestChat() {{
+      const input = document.getElementById('chat-prompt-input');
+      const btn = document.getElementById('btn-send-chat');
+      const container = document.getElementById('chat-response-container');
+      const respText = document.getElementById('chat-response-text');
+      const latencyLabel = document.getElementById('resp-latency');
+      const modelSelect = document.getElementById('chat-model-select');
+      const modelLabel = document.getElementById('resp-model-label');
+
+      const prompt = input.value.trim();
+      if (!prompt) return;
+
+      const chosenModel = modelSelect ? modelSelect.value : 'N.1 Faster';
+      if (modelLabel) modelLabel.innerText = chosenModel;
+
+      btn.disabled = true;
+      btn.innerHTML = '<i class="bx bx-loader-alt animate-spin"></i><span>Generating...</span>';
+      container.classList.remove('hidden');
+      respText.innerText = 'Connecting to Noora AI engine...';
+      latencyLabel.innerText = '';
+
+      const startTime = performance.now();
+
+      try {{
+        const res = await fetch('{base_url}/chat/completions', {{
+          method: 'POST',
+          headers: {{
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer {active_key}'
+          }},
+          body: JSON.stringify({{
+            model: chosenModel,
+            messages: [
+              {{"role": "system", "content": "You are Noora, an intelligent and courteous AI assistant developed and trained by Nadeem. Running locally on Noora LAN AI Server."}},
+              {{"role": "user", "content": prompt}}
+            ],
+            max_tokens: 300,
+            stream: false
+          }})
+        }});
+
+        const duration = Math.round(performance.now() - startTime);
+        latencyLabel.innerText = `${{duration}} ms`;
+
+        if (!res.ok) {{
+          const err = await res.json().catch(() => ({{}}));
+          respText.innerText = `⚠️ Error (${{res.status}}): ${{err.detail || 'Inference request failed'}}`;
+          return;
+        }}
+
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content || 'No response generated.';
+        respText.innerText = content;
+      }} catch (err) {{
+        const duration = Math.round(performance.now() - startTime);
+        latencyLabel.innerText = `${{duration}} ms`;
+        respText.innerText = `⚠️ Connection error: ${{err.message || 'Server unreachable'}}. Please check if server is running.`;
+      }} finally {{
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bx bx-send"></i><span>Send Prompt</span>';
+      }}
+    }}
+  </script>
+</body>
+</html>"""
+
 
 # ----------------- OpenAI-Compatible Endpoints -----------------
 
+@app.get("/v1", response_class=HTMLResponse)
+@app.get("/v1/", response_class=HTMLResponse)
+async def v1_base_status(request: Request):
+    """
+    Renders an interactive status & connection page when accessed via browser,
+    or returns OpenAI-compatible server status JSON when queried by an API client.
+    """
+    lan_ip = get_primary_lan_ip()
+    port = int(get_server_setting("server_port", str(DEFAULT_GATEWAY_PORT)))
+    engine_stats = engine.get_stats()
+    active_key = get_active_working_key()
+    active_key_str = active_key["raw_key"] if active_key else "sk-local-noora-default-lan-key"
+    active_model = engine_stats.get("active_model", "Noora N.1 Faster")
+
+    accept_header = request.headers.get("accept", "")
+    format_param = request.query_params.get("format", "")
+
+    # If client explicitly requests JSON (e.g. cURL with Accept: application/json or ?format=json)
+    if "application/json" in accept_header and "text/html" not in accept_header or format_param == "json":
+        return JSONResponse({
+            "status": engine_stats["status"],
+            "app_name": APP_NAME,
+            "ai_name": AI_NAME,
+            "developer": "Developed & Trained by Nadeem",
+            "version": VERSION,
+            "active_model": active_model,
+            "active_key_status": "Active & Ready",
+            "active_working_key": active_key_str,
+            "lan_base_url": f"http://{lan_ip}:{port}/v1",
+            "models_available": [
+                {"id": "N.1 Faster", "name": "Noora N.1 Faster", "capability": "Ultra-Low Latency & High Speed", "developer": "Nadeem"},
+                {"id": "N.1 Pro", "name": "Noora N.1 Pro Reasoning", "capability": "Deep Reasoning & Code Generation", "developer": "Nadeem"},
+                {"id": "N.1 Core", "name": "Noora N.1 Core", "capability": "Balanced Versatility & Knowledge", "developer": "Nadeem"},
+                {"id": "local-ai", "name": "Noora AI (Active)", "capability": "Auto-selected active model", "developer": "Nadeem"}
+            ],
+            "endpoints": {
+                "models": "/v1/models",
+                "chat_completions": "/v1/chat/completions",
+                "completions": "/v1/completions"
+            }
+        })
+
+    # Return rich interactive HTML landing page
+    html_content = render_v1_landing_html(
+        lan_ip=lan_ip,
+        port=port,
+        active_key=active_key_str,
+        active_model=active_model,
+        server_status=engine_stats["status"],
+        cpu_model=CPU_MODEL_NAME
+    )
+    return HTMLResponse(content=html_content, status_code=200)
+
+
 @app.get("/v1/models")
 async def list_models(auth: Dict[str, Any] = Depends(authenticate_request)):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT filename, name, downloaded_at FROM models")
-    rows = cur.fetchall()
-    conn.close()
-
-    model_entries = []
-    for r in rows:
-        model_entries.append({
-            "id": r["filename"],
+    # Curated Capability-Based Model Entries
+    now = int(time.time())
+    model_entries = [
+        {
+            "id": "N.1 Faster",
+            "name": "Noora N.1 Faster (Developed & Trained by Nadeem)",
             "object": "model",
-            "created": int(r["downloaded_at"]),
-            "owned_by": "local",
+            "created": now,
+            "owned_by": "Nadeem",
+            "capability": "Ultra-Low Latency & High Speed",
             "permission": []
-        })
-    model_entries.append({
-        "id": "local-ai",
-        "object": "model",
-        "created": int(time.time()),
-        "owned_by": "local",
-        "permission": []
-    })
+        },
+        {
+            "id": "noora-n.1-faster",
+            "name": "Noora N.1 Faster",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "permission": []
+        },
+        {
+            "id": "N.1 Pro",
+            "name": "Noora N.1 Pro Reasoning (Developed & Trained by Nadeem)",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "capability": "Deep Reasoning & Code Generation",
+            "permission": []
+        },
+        {
+            "id": "noora-n.1-pro",
+            "name": "Noora N.1 Pro Reasoning",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "permission": []
+        },
+        {
+            "id": "N.1 Core",
+            "name": "Noora N.1 Core (Developed & Trained by Nadeem)",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "capability": "Balanced Versatility & Knowledge",
+            "permission": []
+        },
+        {
+            "id": "noora-n.1-core",
+            "name": "Noora N.1 Core",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "permission": []
+        },
+        {
+            "id": "local-ai",
+            "name": "Noora AI (Active Model)",
+            "object": "model",
+            "created": now,
+            "owned_by": "Nadeem",
+            "permission": []
+        }
+    ]
     return {"object": "list", "data": model_entries}
 
 @app.post("/v1/chat/completions")
@@ -259,15 +722,23 @@ async def chat_completions(
     client_ip = request.client.host if request.client else "127.0.0.1"
     start_time = time.time()
 
-    # Auto-start engine if offline
-    if engine.status != "ONLINE":
-        log_system_event("INFO", "INFERENCE", "Auto-starting engine upon incoming request...")
-        started, s_msg = engine.start_engine()
+    # Model resolution & dynamic switching
+    requested_model = req.model or "N.1 Faster"
+    target_model_info = resolve_model_filename(requested_model)
+    target_model_path = target_model_info["path"] if target_model_info else None
+
+    # Check if target model is running
+    needs_start = engine.status != "ONLINE"
+    needs_switch = target_model_path and engine.active_model_path != str(Path(target_model_path).resolve())
+
+    if needs_start or needs_switch:
+        log_system_event("INFO", "INFERENCE", f"Dynamically launching {target_model_info['name'] if target_model_info else 'default model'}...")
+        started, s_msg = engine.start_engine(model_path=target_model_path)
         if not started:
             log_api_request(client_ip, "/v1/chat/completions", "POST", 503, 0.0, api_key_name=auth["name"], error_message=s_msg)
-            raise HTTPException(status_code=503, detail=f"AI Server is offline and failed to auto-start: {s_msg}")
+            raise HTTPException(status_code=503, detail=f"AI Server failed to launch model: {s_msg}")
 
-    # Inject Noora AI identity
+    # Prepare messages & inject identity
     messages_payload = []
     has_system = False
     for m in req.messages:
@@ -275,7 +746,7 @@ async def chat_completions(
             has_system = True
             messages_payload.append({
                 "role": "system",
-                "content": f"{m.content}\n[Identity: You are {AI_NAME}, a fast, intelligent, and helpful local AI assistant running on Noora AI LAN Server. Developed by {DEVELOPER}.]"
+                "content": f"{m.content}\n[Identity: You are {AI_NAME}, an intelligent, fast, and helpful AI assistant powered by Noora N.1, developed and trained by {DEVELOPER}.]"
             })
         else:
             messages_payload.append({"role": m.role, "content": m.content})
@@ -283,26 +754,54 @@ async def chat_completions(
     if not has_system:
         messages_payload.insert(0, {
             "role": "system",
-            "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant running on Noora AI LAN Server. Developed by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency."
+            "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant powered by Noora N.1. Developed and trained by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency."
         })
+
+    # Context Guardrail: Prevent exceed_context_size_error on big questions
+    # Estimate token count (~3.5 chars per token)
+    total_estimated_tokens = sum(len(m["content"]) for m in messages_payload) // 3.5
+    max_safe_prompt_tokens = 7200  # Safe limit within 8192 context
+
+    if total_estimated_tokens > max_safe_prompt_tokens and len(messages_payload) > 2:
+        # Keep system message (0) and latest user prompt (-1), truncate older middle history
+        sys_msg = messages_payload[0]
+        latest_msg = messages_payload[-1]
+        truncated_history = []
+        cur_tokens = len(sys_msg["content"]) // 3.5 + len(latest_msg["content"]) // 3.5
+        
+        for m in reversed(messages_payload[1:-1]):
+            t_count = len(m["content"]) // 3.5
+            if cur_tokens + t_count < max_safe_prompt_tokens:
+                truncated_history.insert(0, m)
+                cur_tokens += t_count
+            else:
+                break
+        messages_payload = [sys_msg] + truncated_history + [latest_msg]
+        log_system_event("INFO", "GATEWAY", f"Context guardrail adjusted big prompt to fit safe window.")
 
     llama_payload = {
         "messages": messages_payload,
-        "temperature": req.temperature,
-        "top_p": req.top_p,
-        "max_tokens": req.max_tokens,
+        "temperature": req.temperature or 0.7,
+        "top_p": req.top_p or 0.95,
+        "max_tokens": req.max_tokens or 2048,
         "stream": req.stream
     }
 
     engine_url = f"http://{engine.host}:{engine.port}/v1/chat/completions"
-    http_timeout = httpx.Timeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
+    http_timeout = httpx.Timeout(connect=25.0, read=600.0, write=60.0, pool=60.0)
 
     if req.stream:
         async def event_generator():
             accumulated_text = ""
+            # Send initial keepalive comment immediately so client connects in 0ms without timing out
+            yield ": connected\n\n"
             try:
                 async with httpx.AsyncClient(timeout=http_timeout) as client:
                     async with client.stream("POST", engine_url, json=llama_payload) as resp:
+                        if resp.status_code != 200:
+                            err_body = await resp.aread()
+                            yield f"data: {json.dumps({'error': err_body.decode('utf-8', 'ignore')})}\n\n"
+                            return
                         async for line in resp.aiter_lines():
                             if line:
                                 yield f"{line}\n\n"
@@ -334,13 +833,17 @@ async def chat_completions(
                 resp = await client.post(engine_url, json=llama_payload)
                 latency_ms = round((time.time() - start_time) * 1000, 2)
                 if resp.status_code != 200:
-                    log_api_request(client_ip, "/v1/chat/completions", "POST", resp.status_code, latency_ms, api_key_name=auth["name"], error_message=resp.text)
-                    raise HTTPException(status_code=resp.status_code, detail=resp.text)
+                    err_text = resp.text
+                    log_api_request(client_ip, "/v1/chat/completions", "POST", resp.status_code, latency_ms, api_key_name=auth["name"], error_message=err_text)
+                    raise HTTPException(status_code=resp.status_code, detail=err_text)
 
                 data = resp.json()
                 usage = data.get("usage", {})
                 tokens_prompt = usage.get("prompt_tokens", 0)
                 tokens_completion = usage.get("completion_tokens", 0)
+
+                # Set model name in response
+                data["model"] = target_model_info["name"] if target_model_info else "Noora N.1 Faster"
 
                 log_api_request(
                     client_ip, "/v1/chat/completions", "POST", 200, latency_ms,
@@ -349,6 +852,8 @@ async def chat_completions(
                     api_key_name=auth["name"]
                 )
                 return data
+        except HTTPException:
+            raise
         except Exception as e:
             latency_ms = round((time.time() - start_time) * 1000, 2)
             log_api_request(client_ip, "/v1/chat/completions", "POST", 500, latency_ms, api_key_name=auth["name"], error_message=str(e))
@@ -367,7 +872,7 @@ async def text_completions(
         engine.start_engine()
 
     engine_url = f"http://{engine.host}:{engine.port}/v1/completions"
-    http_timeout = httpx.Timeout(connect=15.0, read=300.0, write=30.0, pool=30.0)
+    http_timeout = httpx.Timeout(connect=25.0, read=600.0, write=60.0, pool=60.0)
 
     try:
         async with httpx.AsyncClient(timeout=http_timeout) as client:
@@ -378,6 +883,8 @@ async def text_completions(
                 "stream": False
             })
             latency_ms = round((time.time() - start_time) * 1000, 2)
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
             data = resp.json()
             usage = data.get("usage", {})
             log_api_request(
@@ -387,6 +894,8 @@ async def text_completions(
                 api_key_name=auth["name"]
             )
             return data
+    except HTTPException:
+        raise
     except Exception as e:
         latency_ms = round((time.time() - start_time) * 1000, 2)
         log_api_request(client_ip, "/v1/completions", "POST", 500, latency_ms, api_key_name=auth["name"], error_message=str(e))
@@ -397,7 +906,7 @@ async def text_completions(
 @app.post("/api/server/start")
 async def start_server():
     threads = int(get_server_setting("cpu_threads", str(CPU_PHYSICAL_CORES)))
-    ctx = int(get_server_setting("context_size", "2048"))
+    ctx = int(get_server_setting("context_size", str(DEFAULT_CONTEXT_SIZE)))
     success, msg = engine.start_engine(threads=threads, context_size=ctx)
     return {"success": success, "message": msg, "status": engine.status}
 
@@ -427,7 +936,7 @@ async def set_active_model(payload: Dict[str, int]):
     cur = conn.cursor()
     cur.execute("UPDATE models SET is_active = 0")
     cur.execute("UPDATE models SET is_active = 1 WHERE id = ?", (model_id,))
-    cur.execute("SELECT path, name FROM models WHERE id = ?", (model_id,))
+    cur.execute("SELECT path, name, model_id FROM models WHERE id = ?", (model_id,))
     target = cur.fetchone()
     conn.commit()
     conn.close()
@@ -518,10 +1027,10 @@ async def download_catalog_model(req: ModelDownloadRequest, background_tasks: Ba
             conn = get_db_connection()
             cur = conn.cursor()
             cur.execute("""
-            INSERT INTO models (name, filename, path, size_bytes, format, is_active, downloaded_at)
-            VALUES (?, ?, ?, ?, 'GGUF', 0, ?)
+            INSERT INTO models (name, model_id, capability, filename, path, size_bytes, format, is_active, downloaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'GGUF', 0, ?)
             ON CONFLICT(filename) DO NOTHING
-            """, (item["name"], filename, str(dest_path.resolve()), dest_path.stat().st_size, time.time()))
+            """, (item["name"], item.get("model_id", item["name"]), item.get("capability", "General Intelligence"), filename, str(dest_path.resolve()), dest_path.stat().st_size, time.time()))
             conn.commit()
             conn.close()
 
@@ -555,14 +1064,15 @@ async def get_active_key_info():
         "active_key": active,
         "raw_key": raw_key,
         "base_url": base_url,
-        "model": "local-ai",
-        "quick_curl": f'curl -X POST "{base_url}/chat/completions" -H "Authorization: Bearer {raw_key}" -H "Content-Type: application/json" -d \'{{"model":"local-ai","messages":[{{"role":"user","content":"Hello Noora!"}}]}}\'',
-        "python_sample": f'''from openai import OpenAI\n\nclient = OpenAI(\n    base_url="{base_url}",\n    api_key="{raw_key}"\n)\n\nresponse = client.chat.completions.create(\n    model="local-ai",\n    messages=[{{"role": "user", "content": "Hello Noora!"}}]\n)\nprint(response.choices[0].message.content)'''
+        "model": "N.1 Faster",
+        "models_available": ["N.1 Faster", "N.1 Pro", "N.1 Core"],
+        "quick_curl": f'curl -X POST "{base_url}/chat/completions" -H "Authorization: Bearer {raw_key}" -H "Content-Type: application/json" -d \'{{"model":"N.1 Faster","messages":[{{"role":"user","content":"Hello Noora!"}}]}}\'',
+        "python_sample": f'''from openai import OpenAI\n\nclient = OpenAI(\n    base_url="{base_url}",\n    api_key="{raw_key}"\n)\n\nresponse = client.chat.completions.create(\n    model="N.1 Faster",\n    messages=[{{"role": "user", "content": "Hello Noora!"}}]\n)\nprint(response.choices[0].message.content)'''
     }
 
 @app.post("/api/keys/create")
 async def create_key(req: KeyCreateRequest):
-    raw_key, record = generate_api_key(req.name, req.rate_limit_rpm or 120)
+    raw_key, record = generate_api_key(req.name, req.rate_limit_rpm or 240)
     return {
         "success": True,
         "raw_key": raw_key,
@@ -693,6 +1203,5 @@ async def update_settings(payload: SettingsUpdateRequest):
             update_server_setting(k, str(v))
     return {"success": True, "message": "Settings updated."}
 
-# Mount static frontend build if present
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

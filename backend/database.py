@@ -4,7 +4,10 @@ import secrets
 import time
 from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
-from backend.config import DB_PATH, MODELS_DIR, DEFAULT_MODEL_FILENAME, TRUSTED_MODELS_CATALOG
+from backend.config import (
+    DB_PATH, MODELS_DIR, DEFAULT_MODEL_FILENAME,
+    TRUSTED_MODELS_CATALOG, NOORA_MODELS, DEFAULT_CONTEXT_SIZE
+)
 
 DEFAULT_MASTER_KEY = "sk-local-noora-default-lan-key"
 
@@ -17,7 +20,6 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    # Enable WAL mode for high performance and concurrency
     cursor.execute("PRAGMA journal_mode = WAL;")
     cursor.execute("PRAGMA foreign_keys = ON;")
 
@@ -26,6 +28,8 @@ def init_db():
     CREATE TABLE IF NOT EXISTS models (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
+        model_id TEXT,
+        capability TEXT,
         filename TEXT NOT NULL UNIQUE,
         path TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
@@ -35,6 +39,20 @@ def init_db():
         sha256 TEXT
     );
     """)
+
+    # Migrations for models table
+    cursor.execute("PRAGMA table_info(models);")
+    columns = [row["name"] for row in cursor.fetchall()]
+    if "model_id" not in columns:
+        try:
+            cursor.execute("ALTER TABLE models ADD COLUMN model_id TEXT;")
+        except Exception:
+            pass
+    if "capability" not in columns:
+        try:
+            cursor.execute("ALTER TABLE models ADD COLUMN capability TEXT;")
+        except Exception:
+            pass
 
     # 2. API Keys Table
     cursor.execute("""
@@ -48,14 +66,13 @@ def init_db():
         last_used_at REAL,
         request_count INTEGER NOT NULL DEFAULT 0,
         is_active INTEGER NOT NULL DEFAULT 1,
-        rate_limit_rpm INTEGER NOT NULL DEFAULT 60
+        rate_limit_rpm INTEGER NOT NULL DEFAULT 120
     );
     """)
 
-    # Check if raw_key column exists (migration)
     cursor.execute("PRAGMA table_info(api_keys);")
-    columns = [row["name"] for row in cursor.fetchall()]
-    if "raw_key" not in columns:
+    key_columns = [row["name"] for row in cursor.fetchall()]
+    if "raw_key" not in key_columns:
         try:
             cursor.execute("ALTER TABLE api_keys ADD COLUMN raw_key TEXT;")
         except Exception:
@@ -128,10 +145,10 @@ def init_db():
     default_settings = {
         "server_port": "8080",
         "cpu_threads": "4",
-        "context_size": "2048",
-        "max_tokens": "2048",
+        "context_size": str(DEFAULT_CONTEXT_SIZE),
+        "max_tokens": "4096",
         "lan_access_only": "true",
-        "rate_limit_default_rpm": "120",
+        "rate_limit_default_rpm": "240",
         "log_retention_days": "14",
         "dark_mode": "true",
         "selected_interface": "auto"
@@ -142,12 +159,18 @@ def init_db():
         VALUES (?, ?, ?)
         """, (k, v, time.time()))
 
+    # Always ensure context_size in settings is at least 8192
+    cursor.execute("SELECT value FROM server_settings WHERE key = 'context_size'")
+    row = cursor.fetchone()
+    if row and int(row["value"]) < 8192:
+        cursor.execute("UPDATE server_settings SET value = '8192', updated_at = ? WHERE key = 'context_size'", (time.time(),))
+
     conn.commit()
 
     # Sync local models from the models/ folder into the database
     sync_models_from_disk(conn)
 
-    # Ensure at least one default API key exists if table is empty
+    # Ensure default API key exists
     ensure_default_api_key(conn)
 
     conn.close()
@@ -157,21 +180,66 @@ def sync_models_from_disk(conn: sqlite3.Connection):
     if MODELS_DIR.exists():
         for file in MODELS_DIR.glob("*.gguf"):
             size = file.stat().st_size
-            name = file.stem.replace("-", " ").title()
-            
+            meta = NOORA_MODELS.get(file.name, {})
+            name = meta.get("name", file.stem.replace("-", " ").title())
+            model_id = meta.get("id", file.stem)
+            capability = meta.get("capability", "General Intelligence")
+
             # Check if active model exists
             cursor.execute("SELECT id FROM models WHERE is_active = 1")
             has_active = cursor.fetchone() is not None
             is_active = 1 if (not has_active and file.name == DEFAULT_MODEL_FILENAME) else 0
 
             cursor.execute("""
-            INSERT INTO models (name, filename, path, size_bytes, format, is_active, downloaded_at)
-            VALUES (?, ?, ?, ?, 'GGUF', ?, ?)
+            INSERT INTO models (name, model_id, capability, filename, path, size_bytes, format, is_active, downloaded_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'GGUF', ?, ?)
             ON CONFLICT(filename) DO UPDATE SET
+                name = excluded.name,
+                model_id = excluded.model_id,
+                capability = excluded.capability,
                 path = excluded.path,
                 size_bytes = excluded.size_bytes
-            """, (name, file.name, str(file.resolve()), size, is_active, time.time()))
+            """, (name, model_id, capability, file.name, str(file.resolve()), size, is_active, time.time()))
     conn.commit()
+
+def resolve_model_filename(requested_model: str) -> Optional[Dict[str, Any]]:
+    """Resolves requested model name or alias to an installed model record."""
+    if not requested_model:
+        requested_model = "local-ai"
+    req_clean = requested_model.strip().lower()
+
+    # Direct check against NOORA_MODELS aliases
+    for fname, meta in NOORA_MODELS.items():
+        aliases = [a.lower() for a in meta.get("aliases", [])]
+        if req_clean in aliases or req_clean == meta.get("id", "").lower():
+            target_path = MODELS_DIR / fname
+            if target_path.exists():
+                return {
+                    "filename": fname,
+                    "path": str(target_path.resolve()),
+                    "name": meta["name"],
+                    "model_id": meta["id"],
+                    "capability": meta["capability"]
+                }
+
+    # Query DB
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT filename, path, name, model_id, capability FROM models")
+    rows = cur.fetchall()
+    conn.close()
+
+    for r in rows:
+        fn = r["filename"].lower()
+        mid = (r["model_id"] or "").lower()
+        nm = r["name"].lower()
+        if req_clean in [fn, mid, nm] or req_clean in ["local-ai", "default"]:
+            return dict(r)
+
+    # Fallback to active model or first model in DB
+    if rows:
+        return dict(rows[0])
+    return None
 
 def ensure_default_api_key(conn: sqlite3.Connection):
     cursor = conn.cursor()
@@ -183,12 +251,12 @@ def ensure_default_api_key(conn: sqlite3.Connection):
         key_prefix = f"{raw_key[:12]}...{raw_key[-4:]}"
         cursor.execute("""
         INSERT INTO api_keys (name, key_hash, key_prefix, raw_key, created_at, is_active, rate_limit_rpm)
-        VALUES (?, ?, ?, ?, ?, 1, 120)
+        VALUES (?, ?, ?, ?, ?, 1, 240)
         ON CONFLICT(key_hash) DO UPDATE SET is_active = 1, raw_key = excluded.raw_key
         """, ("Default Master LAN Key", key_hash, key_prefix, raw_key, time.time()))
         conn.commit()
 
-def generate_api_key(name: str, rate_limit_rpm: int = 120) -> Tuple[str, Dict[str, Any]]:
+def generate_api_key(name: str, rate_limit_rpm: int = 240) -> Tuple[str, Dict[str, Any]]:
     raw_key = f"sk-local-{secrets.token_hex(16)}"
     key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
     key_prefix = f"{raw_key[:12]}...{raw_key[-4:]}"
@@ -227,7 +295,6 @@ def get_active_working_key() -> Optional[Dict[str, Any]]:
     """)
     row = cursor.fetchone()
     if not row:
-        # Create default
         ensure_default_api_key(conn)
         cursor.execute("""
         SELECT id, name, key_prefix, raw_key, is_active, rate_limit_rpm
@@ -242,7 +309,6 @@ def verify_api_key(raw_key: str) -> Optional[Dict[str, Any]]:
         return None
     raw_key = raw_key.strip()
     
-    # Check if raw_key matches known test keys
     if raw_key in ["auto", "local-dev", "test-key"]:
         active = get_active_working_key()
         if active:
@@ -282,7 +348,6 @@ def log_api_request(client_ip: str, endpoint: str, method: str, status_code: int
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (now, client_ip, endpoint, method, status_code, latency_ms, tokens_prompt, tokens_completion, api_key_name, error_message))
     
-    # Also update or insert connected device record
     cursor.execute("""
     INSERT INTO devices (ip_address, first_seen, last_seen, request_count, last_api_key_name, is_blocked)
     VALUES (?, ?, ?, 1, ?, 0)

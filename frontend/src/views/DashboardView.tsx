@@ -108,15 +108,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
       {/* Top Banner / Controls */}
       <div className="glass-panel p-6 rounded-2xl flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-3">
             <span className={`w-3.5 h-3.5 rounded-full ${
               isOnline ? 'bg-emerald-500 shadow-lg shadow-emerald-500/50' : 'bg-slate-500'
             }`}></span>
             <h2 className="text-2xl font-bold text-white tracking-tight">
               AI Server {status?.status || 'OFFLINE'}
             </h2>
-            <span className="text-xs px-2.5 py-1 rounded-full font-medium bg-slate-800 text-slate-300 border border-slate-700">
-              Active Model: {status?.active_model || 'Qwen 2.5 0.5B'}
+            <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              Active Model: {status?.active_model || 'Noora N.1 Faster'}
+            </span>
+            <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+              Developed & Trained by Nadeem
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">

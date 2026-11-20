@@ -78,21 +78,27 @@ export const PlatformsView: React.FC<PlatformsViewProps> = ({ status }) => {
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer ${activeKey}" \\
   -d '{
-    "model": "local-ai",
-    "messages": [{"role": "user", "content": "Hello Noora!"}],
-    "max_tokens": 50
+    "model": "N.1 Faster",
+    "messages": [{"role": "user", "content": "Hello Noora! Introduce yourself."}],
+    "max_tokens": 100
   }'`;
 
   const pythonScript = `from openai import OpenAI
 
 # Connect from any phone, laptop, or server on the same Wi-Fi
+# Models available (Developed & Trained by Nadeem):
+# - "N.1 Faster" (Speed / Low-Latency)
+# - "N.1 Pro"    (Code & Deep Reasoning)
+# - "N.1 Core"   (Balanced Knowledge)
+# - "local-ai"   (Active server model)
+
 client = OpenAI(
     base_url="${lanUrl}",
     api_key="${activeKey}"
 )
 
 completion = client.chat.completions.create(
-    model="local-ai",
+    model="N.1 Faster",
     messages=[
         {"role": "user", "content": "Hello Noora! Are you working on our local LAN?"}
     ]
@@ -105,7 +111,7 @@ print(completion.choices[0].message.content)`;
     "Authorization" = "Bearer ${activeKey}"
 }
 $body = @{
-    model    = "local-ai"
+    model    = "N.1 Faster"
     messages = @(@{ role = "user"; content = "Hello Noora!" })
 } | ConvertTo-Json
 
@@ -207,9 +213,28 @@ Invoke-RestMethod -Uri "${lanUrl}/chat/completions" -Method POST -Headers $heade
           </div>
         </div>
 
-        <div className="pt-2 text-[11px] text-slate-400 flex items-center space-x-2">
-          <i className="bx bx-info-circle text-indigo-400 text-sm"></i>
-          <span>Model Name parameter: <code className="text-indigo-300 font-mono">local-ai</code> or your active GGUF model name.</span>
+        <div className="pt-2 text-[11px] text-slate-400 space-y-1">
+          <div className="flex items-center space-x-2">
+            <i className="bx bx-chip text-indigo-400 text-sm"></i>
+            <span className="font-semibold text-slate-200">Available Noora Models (Trained & Developed by Nadeem):</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
+            <div className="p-2 rounded bg-slate-900 border border-slate-800">
+              <span className="text-emerald-400 font-bold block">"N.1 Faster"</span>
+              <span className="text-slate-400 text-[10px]">Speed & Ultra-Low Latency</span>
+            </div>
+            <div className="p-2 rounded bg-slate-900 border border-slate-800">
+              <span className="text-indigo-400 font-bold block">"N.1 Pro"</span>
+              <span className="text-slate-400 text-[10px]">Deep Reasoning & Coding</span>
+            </div>
+            <div className="p-2 rounded bg-slate-900 border border-slate-800">
+              <span className="text-amber-400 font-bold block">"N.1 Core"</span>
+              <span className="text-slate-400 text-[10px]">Balanced Knowledge</span>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500 pt-1">
+            Pass any of these IDs in the <code className="text-indigo-300">"model"</code> parameter or use <code className="text-indigo-300">"local-ai"</code> for the active model.
+          </p>
         </div>
       </div>
 
@@ -236,7 +261,7 @@ Invoke-RestMethod -Uri "${lanUrl}/chat/completions" -Method POST -Headers $heade
             <li>Go to <strong>Settings → Model Provider</strong> and select <strong>OpenAI API</strong>.</li>
             <li>Set <strong>API Host</strong> to: <code className="text-indigo-400 font-mono font-bold">{lanUrl}</code></li>
             <li>Set <strong>API Key</strong> to: <code className="text-amber-400 font-mono font-bold">{activeKey}</code></li>
-            <li>Set <strong>Model</strong> to: <code className="text-indigo-400 font-mono font-bold">local-ai</code></li>
+            <li>Set <strong>Model</strong> to: <code className="text-indigo-400 font-mono font-bold">N.1 Faster</code> (or <code className="text-indigo-300 font-mono">N.1 Pro</code> / <code className="text-indigo-300 font-mono">N.1 Core</code> / <code className="text-indigo-300 font-mono">local-ai</code>)</li>
             <li>Save and start chatting! You can now use your laptop's AI from anywhere in your house/office.</li>
           </ol>
         </div>

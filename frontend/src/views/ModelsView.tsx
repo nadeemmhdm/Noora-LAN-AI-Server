@@ -152,15 +152,30 @@ export const ModelsView: React.FC<ModelsViewProps> = ({ status, refreshStatus })
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <div className="flex items-center space-x-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <h4 className="text-base font-bold text-white">{m.name}</h4>
+                        {m.model_id && (
+                          <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold uppercase bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            API ID: {m.model_id}
+                          </span>
+                        )}
                         {isActive && (
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                             Active
                           </span>
                         )}
                       </div>
-                      <p className="text-xs font-mono text-slate-400 mt-1 truncate max-w-xs">{m.filename}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="text-[11px] font-medium text-emerald-400">
+                          ✨ Developed & Trained by Nadeem
+                        </span>
+                        {m.capability && (
+                          <span className="text-[11px] text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                            🎯 {m.capability}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs font-mono text-slate-500 mt-1 truncate max-w-xs">{m.filename}</p>
                     </div>
                     <span className="text-xs font-mono px-2 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
                       {formatBytes(m.size_bytes)}

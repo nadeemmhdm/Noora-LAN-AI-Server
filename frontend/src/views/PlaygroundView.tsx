@@ -20,19 +20,19 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
-      content: 'Hello! I am Noora, your local AI running directly on this machine. How can I assist you today?',
+      content: 'Hello! I am Noora, developed and trained by Nadeem. I am running 100% locally on this machine with high speed and zero cloud dependencies. How can I assist you today?',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
   const [inputPrompt, setInputPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<string>('local-ai');
+  const [selectedModel, setSelectedModel] = useState<string>('N.1 Faster');
   const [selectedKey, setSelectedKey] = useState<string>('');
   const [activeRawKey, setActiveRawKey] = useState<string>('');
   const [copiedKey, setCopiedKey] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(512);
-  const [systemPrompt, setSystemPrompt] = useState('You are Noora, an intelligent and courteous local AI assistant running on Noora AI LAN Server. Developed by Nadeem.');
+  const [systemPrompt, setSystemPrompt] = useState('You are Noora, an intelligent and courteous local AI assistant developed and trained by Nadeem. Running on Noora LAN AI Server.');
   const [showSettings, setShowSettings] = useState(false);
   const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
 
@@ -224,17 +224,29 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
             <span>{status?.status === 'ONLINE' ? 'Model Loaded & Ready' : 'Ready (Auto-Start)'}</span>
           </div>
 
-          {/* Model Selector */}
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            className="glass-input px-2.5 py-1 rounded-lg text-slate-200 text-xs focus:outline-none"
-          >
-            <option value="local-ai">local-ai (Active Model: {status?.active_model || 'Qwen 2.5 0.5B'})</option>
-            {models.map(m => (
-              <option key={m.id} value={m.filename}>{m.name} ({m.filename})</option>
-            ))}
-          </select>
+          {/* Model Selector with Capability Badges */}
+          <div className="flex items-center space-x-2">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="glass-input px-2.5 py-1 rounded-lg text-slate-200 text-xs font-semibold focus:outline-none bg-slate-900 border border-indigo-500/40"
+            >
+              <optgroup label="Noora Models (Trained & Developed by Nadeem)">
+                <option value="N.1 Faster">⚡ Noora N.1 Faster (Speed / Ultra-Low Latency)</option>
+                <option value="N.1 Pro">🧠 Noora N.1 Pro Reasoning (Code & Deep Logic)</option>
+                <option value="N.1 Core">⚖️ Noora N.1 Core (Balanced & Knowledge)</option>
+              </optgroup>
+              <optgroup label="Default & Local Files">
+                <option value="local-ai">local-ai (Auto-Selected Active Model)</option>
+                {models.map(m => (
+                  <option key={m.id} value={m.filename}>{m.name} ({m.filename})</option>
+                ))}
+              </optgroup>
+            </select>
+            <span className="hidden lg:inline text-[11px] text-indigo-400 font-medium px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20">
+              By Nadeem
+            </span>
+          </div>
         </div>
 
         {/* Working API Key Auto-Collector Bar */}

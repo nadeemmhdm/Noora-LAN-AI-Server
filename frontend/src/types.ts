@@ -32,6 +32,8 @@ export interface ServerStatus {
 export interface ModelItem {
   id: number;
   name: string;
+  model_id?: string;
+  capability?: string;
   filename: string;
   path: string;
   size_bytes: number;
