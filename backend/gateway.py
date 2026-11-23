@@ -30,7 +30,8 @@ from backend.network_utils import (
 )
 from backend.firewall import check_firewall_rule, add_firewall_rule, remove_firewall_rule
 from backend.web_search import (
-    check_internet_connectivity, perform_web_search, should_trigger_web_search, format_search_context
+    check_internet_connectivity, perform_web_search, should_trigger_web_search,
+    format_search_context, format_collapsible_sources_markdown, analyze_search_intent
 )
 
 # Initialize Database on startup
@@ -453,9 +454,9 @@ def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model
           Test Prompt Directly in Browser
         </h3>
         <div class="flex items-center space-x-2 text-xs">
-          <label class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-indigo-300 font-medium cursor-pointer hover:border-indigo-500/50 transition-all">
+          <label class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-indigo-300 font-medium cursor-pointer hover:border-indigo-500/50 transition-all" title="AI automatically determines whether live web search is needed">
             <input type="checkbox" id="chat-web-search-toggle" {websearch_checked} class="accent-indigo-500 cursor-pointer">
-            <span>🌐 Web Search</span>
+            <span>🌐 AI Mode (Auto Search)</span>
           </label>
           <span class="text-slate-400 hidden sm:inline">Model:</span>
           <select id="chat-model-select" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs font-semibold focus:outline-none">
@@ -585,12 +586,12 @@ print(res.choices[0].message.content)</pre>
       if (modelLabel) modelLabel.innerText = chosenModel;
 
       const webSearchToggle = document.getElementById('chat-web-search-toggle');
-      const useWebSearch = webSearchToggle ? webSearchToggle.checked : false;
+      const useWebSearch = webSearchToggle ? webSearchToggle.checked : true;
 
       btn.disabled = true;
-      btn.innerHTML = '<i class="bx bx-loader-alt animate-spin"></i><span>' + (useWebSearch ? 'Searching & Generating...' : 'Generating...') + '</span>';
+      btn.innerHTML = '<i class="bx bx-loader-alt animate-spin"></i><span>Analyzing & Generating...</span>';
       container.classList.remove('hidden');
-      respText.innerText = useWebSearch ? 'Searching web & connecting to Noora AI engine...' : 'Connecting to Noora AI engine...';
+      respText.innerHTML = '<span class="text-indigo-400 flex items-center gap-1.5"><i class="bx bx-loader-alt animate-spin"></i> Noora AI is analyzing prompt & generating response on CPU...</span>';
       latencyLabel.innerText = '';
 
       const startTime = performance.now();
@@ -625,7 +626,20 @@ print(res.choices[0].message.content)</pre>
 
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content || 'No response generated.';
-        respText.innerText = content;
+        
+        // Render markdown links and collapsible sources details tag
+        let formattedHtml = content
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/&lt;details class="noora-sources-accordion"(.*?)&gt;/g, '<details class="noora-sources-accordion mt-3 p-3 rounded-xl bg-slate-950 border border-indigo-500/30 text-xs" $1>')
+          .replace(/&lt;\/details&gt;/g, '</details>')
+          .replace(/&lt;summary class="noora-sources-summary"&gt;(.*?)&lt;\/summary&gt;/g, '<summary class="cursor-pointer font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1.5 select-none">$1</summary>')
+          .replace(/&lt;div class="noora-sources-body"&gt;/g, '<div class="mt-2.5 space-y-2 text-slate-300 pl-2 border-l-2 border-indigo-500/40">')
+          .replace(/&lt;\/div&gt;/g, '</div>')
+          .replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:underline inline-flex items-center gap-0.5 font-medium">$1 <i class="bx bx-link-external text-[10px]"></i></a>')
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+        respText.innerHTML = formattedHtml;
       }} catch (err) {{
         const duration = Math.round(performance.now() - startTime);
         latencyLabel.innerText = `${{duration}} ms`;
@@ -809,7 +823,7 @@ async def chat_completions(
             "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant powered by Noora N.1. Developed and trained by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency."
         })
 
-    # ---------------- Web Search Augmentation (Online Only) ----------------
+    # ---------------- Intelligent AI-Powered Web Search Determination ----------------
     latest_user_text = ""
     for msg in reversed(req.messages):
         if msg.role == "user" and msg.content.strip():
@@ -820,22 +834,31 @@ async def chat_completions(
     cfg_search_mode = get_server_setting("web_search_mode", "auto").lower()
     max_search_res = int(get_server_setting("web_search_max_results", "4"))
 
+    # Analyze question: Intelligent auto-detection in AI Mode
+    intent_analysis = analyze_search_intent(latest_user_text) if latest_user_text else {"needs_search": False, "reason": "No input"}
+
     perform_search = False
-    if req.web_search is True:
-        perform_search = True
-    elif req.web_search is False:
+    if req.web_search is False:
+        # Explicitly disabled by client
         perform_search = False
+    elif req.web_search == "force":
+        # Explicitly forced by client
+        perform_search = bool(latest_user_text)
     elif cfg_enable_search:
-        if cfg_search_mode == "always":
+        # AI Mode: AI analyzes the question before generating an answer
+        if cfg_search_mode == "always" and req.web_search is True:
             perform_search = bool(latest_user_text and len(latest_user_text) >= 3)
-        elif cfg_search_mode == "auto":
-            perform_search = should_trigger_web_search(latest_user_text)
+        else:
+            # Automatic intelligent decision:
+            # If the question requires current, recent, updated, or externally verifiable info -> True
+            # If the question can be answered accurately using existing knowledge (coding, greeting, math, concepts) -> False
+            perform_search = intent_analysis["needs_search"]
 
     search_sources = []
     if perform_search and latest_user_text:
         online, _ = check_internet_connectivity()
         if online:
-            log_system_event("INFO", "WEB_SEARCH", f"Running live web search for: '{latest_user_text[:60]}'")
+            log_system_event("INFO", "WEB_SEARCH", f"AI triggered live web search ({intent_analysis.get('reason', 'real-time fact')}) for: '{latest_user_text[:60]}'")
             search_res = perform_web_search(latest_user_text, max_results=max_search_res)
             if search_res.get("results"):
                 search_sources = search_res["results"]
@@ -844,8 +867,9 @@ async def chat_completions(
                 log_system_event("INFO", "WEB_SEARCH", f"Retrieved {len(search_sources)} search results successfully.")
         else:
             log_system_event("INFO", "WEB_SEARCH", "Server is offline. Web search skipped; using local offline model.")
-            if req.web_search is True:
-                messages_payload[0]["content"] += "\n\n[System Note: Web search was requested, but server currently has no internet connection. Answering using internal local offline knowledge.]"
+            messages_payload[0]["content"] += "\n\n[System Note: Web search was deemed beneficial, but the server is currently offline. Answering using internal local neural model knowledge.]"
+    else:
+        log_system_event("INFO", "INFERENCE", f"AI Mode decided direct neural answer without web search. Reason: {intent_analysis.get('reason', 'direct knowledge')}")
 
     # Context Guardrail: Prevent exceed_context_size_error on big questions
     # Estimate token count (~3.5 chars per token)
@@ -895,7 +919,7 @@ async def chat_completions(
                         async for line in resp.aiter_lines():
                             if line:
                                 if line.startswith("data: ") and line.strip().endswith("[DONE]") and search_sources:
-                                    sources_text = "\n\n🌐 **Web Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']}) — *{s['source']}*" for s in search_sources])
+                                    sources_text = format_collapsible_sources_markdown(search_sources)
                                     source_chunk = {
                                         "choices": [{
                                             "delta": {"content": sources_text},
@@ -946,7 +970,7 @@ async def chat_completions(
                 data["model"] = target_model_info["name"] if target_model_info else "Noora N.1 Faster"
                 if search_sources:
                     data["sources"] = search_sources
-                    sources_text = "\n\n🌐 **Web Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']}) — *{s['source']}*" for s in search_sources])
+                    sources_text = format_collapsible_sources_markdown(search_sources)
                     if data.get("choices") and len(data["choices"]) > 0:
                         data["choices"][0]["message"]["content"] += sources_text
 

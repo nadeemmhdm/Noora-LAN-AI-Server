@@ -9,6 +9,146 @@ interface Message {
   tokensPerSec?: number;
 }
 
+interface ParsedSource {
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+}
+
+function parseMessageContent(rawContent: string): { mainText: string; sources: ParsedSource[] } {
+  if (!rawContent) return { mainText: '', sources: [] };
+
+  // Check for <details class="noora-sources-accordion"
+  const detailsIndex = rawContent.indexOf('<details class="noora-sources-accordion"');
+  const legacyIndex = rawContent.indexOf('🌐 **Web Sources:**');
+
+  const splitIndex = detailsIndex !== -1 ? detailsIndex : legacyIndex;
+  if (splitIndex === -1) {
+    return { mainText: rawContent.trim(), sources: [] };
+  }
+
+  const mainText = rawContent.slice(0, splitIndex).trim();
+  const sourcesPart = rawContent.slice(splitIndex);
+
+  const sources: ParsedSource[] = [];
+  // Match markdown links: [Title](url) — *Source*
+  const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)(?:\s*—\s*\*([^*]+)\*)?/g;
+  let match;
+  while ((match = linkRegex.exec(sourcesPart)) !== null) {
+    const title = match[1];
+    const url = match[2];
+    let domain = match[3] || '';
+    if (!domain && url.includes('://')) {
+      domain = url.split('://')[1].split('/')[0];
+    }
+    // Check if there is a blockquote snippet after it
+    const afterPos = match.index + match[0].length;
+    const snippetMatch = sourcesPart.slice(afterPos, afterPos + 300).match(/>\s*([^\n<]+)/);
+    const snippet = snippetMatch ? snippetMatch[1].trim() : undefined;
+
+    sources.push({
+      title,
+      url,
+      domain: domain || 'Web Source',
+      snippet
+    });
+  }
+
+  return { mainText, sources };
+}
+
+const AssistantMessageBubble: React.FC<{ content: string; time?: string; isGenerating?: boolean }> = ({ content, time, isGenerating }) => {
+  const [sourcesOpen, setSourcesOpen] = useState(true);
+  const { mainText, sources } = parseMessageContent(content);
+  const hasSources = sources.length > 0;
+
+  return (
+    <div className="max-w-[85%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed bg-slate-900/90 text-slate-200 border border-slate-800 shadow-md rounded-tl-sm space-y-2">
+      <div className="flex items-center justify-between text-[10px] text-slate-400 pb-1 border-b border-slate-800/80">
+        <div className="flex items-center space-x-2">
+          <span className="font-semibold text-slate-300">Noora AI</span>
+          {hasSources ? (
+            <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px] font-medium flex items-center gap-1">
+              <i className="bx bx-globe"></i> Live Web Verified
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-medium flex items-center gap-1">
+              <i className="bx bx-chip"></i> Direct Neural Knowledge
+            </span>
+          )}
+        </div>
+        <span>{time}</span>
+      </div>
+
+      {/* Main Response Text */}
+      <div className="whitespace-pre-wrap font-sans text-slate-200">
+        {mainText || (
+          isGenerating ? (
+            <span className="flex items-center space-x-1.5 text-indigo-400">
+              <i className="bx bx-loader-alt animate-spin text-base"></i>
+              <span>Analyzing question & generating answer on CPU...</span>
+            </span>
+          ) : content
+        )}
+      </div>
+
+      {/* Collapsible & Expandable Web Sources Section */}
+      {hasSources && (
+        <div className="mt-3 pt-3 border-t border-slate-800">
+          <div className="rounded-xl border border-indigo-500/30 bg-slate-950/70 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSourcesOpen(!sourcesOpen)}
+              className="w-full px-3 py-2 bg-slate-900/80 hover:bg-slate-900 flex items-center justify-between text-xs font-semibold text-indigo-300 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center space-x-2">
+                <i className="bx bx-globe text-cyan-400 text-sm"></i>
+                <span>Web Sources & Citations</span>
+                <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 text-[10px] font-mono">
+                  {sources.length} sources
+                </span>
+              </div>
+              <div className="flex items-center space-x-1 text-[11px] text-slate-400">
+                <span>{sourcesOpen ? 'Hide Sources' : 'Expand Sources'}</span>
+                <i className={`bx ${sourcesOpen ? 'bx-chevron-up' : 'bx-chevron-down'} text-base`}></i>
+              </div>
+            </button>
+
+            {sourcesOpen && (
+              <div className="p-3 space-y-2 border-t border-slate-800/80">
+                {sources.map((s, sIdx) => (
+                  <div key={sIdx} className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/90 space-y-1 hover:border-indigo-500/40 transition-colors">
+                    <div className="flex items-center justify-between gap-2">
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-semibold text-indigo-300 hover:text-indigo-200 hover:underline flex items-center gap-1.5 truncate"
+                      >
+                        <i className="bx bx-link-external shrink-0 text-[11px] text-slate-400"></i>
+                        <span className="truncate">{s.title}</span>
+                      </a>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700 shrink-0 font-mono">
+                        {s.domain}
+                      </span>
+                    </div>
+                    {s.snippet && (
+                      <p className="text-[11px] text-slate-400 leading-relaxed pl-2 border-l-2 border-indigo-500/30">
+                        {s.snippet}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface PlaygroundViewProps {
   status: ServerStatus | null;
   models: ModelItem[];
@@ -220,10 +360,10 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
   };
 
   const samplePrompts = [
-    'Who are you and who developed you?',
-    'Search online: What are the latest developments in artificial intelligence in 2024?',
-    'Write a quick Python script to download a webpage.',
-    'Explain how neural networks learn in 3 simple bullet points.'
+    'What is the latest release of Python in 2026?',
+    'Write a quick Python script to parse a JSON file.',
+    'Who are you and who developed and trained you?',
+    'What are the latest news headlines in technology today?'
   ];
 
   return (
@@ -279,23 +419,27 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
           </button>
         </div>
 
-        {/* Actions & Web Search */}
+        {/* Actions & AI Mode */}
         <div className="flex items-center space-x-2">
-          {/* Web Search Toggle */}
+          {/* AI Mode: Automatic Intelligent Web Search */}
           <button
             onClick={() => setWebSearchEnabled(!webSearchEnabled)}
             className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition-all ${
               webSearchEnabled
-                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/30'
+                ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 hover:bg-indigo-600/30 shadow-sm'
                 : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
             }`}
-            title={isOnline ? "Web Search enabled (Searches online when needed)" : "Internet offline (Local model only)"}
+            title={
+              webSearchEnabled
+                ? (isOnline ? "AI Mode Active: AI automatically analyzes each question and triggers web search only when current/updated info is needed." : "AI Mode Active: Offline (Answers using 100% local model knowledge)")
+                : "AI Mode: Web search forced OFF (Local model only)"
+            }
           >
-            <i className={`bx ${webSearchEnabled ? 'bx-globe' : 'bx-wifi-off'} text-sm`}></i>
-            <span>Web Search: {webSearchEnabled ? 'ON' : 'OFF'}</span>
+            <i className={`bx ${webSearchEnabled ? 'bx-brain' : 'bx-chip'} text-sm text-indigo-400`}></i>
+            <span>AI Mode: {webSearchEnabled ? 'Auto Web Search' : 'Local Only'}</span>
             <span
-              className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`}
-              title={isOnline ? "Internet Connected" : "Internet Offline"}
+              className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}
+              title={isOnline ? "Internet Online (Live Search Ready)" : "Internet Offline (Local Model Active)"}
             ></span>
           </button>
 
@@ -378,24 +522,23 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
               </div>
 
               {/* Message Bubble */}
-              <div className={`max-w-[80%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed ${
-                isUser
-                  ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20 rounded-tr-sm'
-                  : 'bg-slate-900/90 text-slate-200 border border-slate-800 shadow-md rounded-tl-sm'
-              }`}>
-                <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                  <span className="font-semibold text-slate-300">{isUser ? 'You' : 'Noora AI'}</span>
-                  <span>{m.time}</span>
+              {isUser ? (
+                <div className="max-w-[80%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed bg-indigo-600 text-white shadow-lg shadow-indigo-600/20 rounded-tr-sm">
+                  <div className="flex items-center justify-between text-[10px] text-indigo-200 mb-1">
+                    <span className="font-semibold text-white">You</span>
+                    <span>{m.time}</span>
+                  </div>
+                  <div className="whitespace-pre-wrap font-sans">
+                    {m.content}
+                  </div>
                 </div>
-                <div className="whitespace-pre-wrap font-sans">
-                  {m.content || (
-                    <span className="flex items-center space-x-1.5 text-indigo-400">
-                      <i className="bx bx-loader-alt animate-spin text-base"></i>
-                      <span>Thinking & generating tokens on CPU...</span>
-                    </span>
-                  )}
-                </div>
-              </div>
+              ) : (
+                <AssistantMessageBubble
+                  content={m.content}
+                  time={m.time}
+                  isGenerating={isGenerating && idx === messages.length - 1}
+                />
+              )}
             </div>
           );
         })}

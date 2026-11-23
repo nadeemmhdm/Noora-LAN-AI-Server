@@ -233,20 +233,156 @@ def perform_web_search(query: str, max_results: int = 4) -> Dict[str, Any]:
         "source": "online_search" if results else "no_results_found"
     }
 
-SEARCH_TRIGGER_KEYWORDS = [
-    "latest", "current", "news", "today", "yesterday", "recently", "recent",
-    "2024", "2025", "2026", "weather", "score", "winner", "stock", "price",
-    "who won", "who is the current", "what happened", "search", "browse",
-    "find online", "update", "release date", "schedule", "election", "championship",
-    "market cap", "top headlines", "what is new", "newest"
+# ----------------- Intelligent AI Search Intent Classification -----------------
+
+# 1. Queries that must NEVER trigger web search (Foundational knowledge, greetings, coding, math)
+EXCLUSION_PATTERNS = [
+    # Greetings, identity, small talk, pleasantries
+    r"^(hi|hello|hey|howdy|greetings|good\s+(morning|afternoon|evening|night)|how\s+are\s+you|what'?s\s+up|yo)\b",
+    r"^(who\s+are\s+you|who\s+(created|made|trained|developed)\s+you|what\s+is\s+your\s+name|introduce\s+yourself)\b",
+    r"^(thank\s+you|thanks|bye|goodbye|see\s+you|have\s+a\s+good\s+day)\b",
+    r"^(tell\s+me\s+a\s+joke|make\s+me\s+laugh|who\s+is\s+nadeem|what\s+is\s+noora)\b",
+
+    # Pure programming, coding, debugging, algorithms
+    r"^(write|create|implement|code|generate|debug|fix|refactor)\s+(a\s+|an\s+)?(python|javascript|typescript|c\+\+|c#|java|rust|go|html|css|sql|bash|powershell|script|function|class|method|component|algorithm|regex|query|unit\s+test)\b",
+    r"^(how\s+to\s+)?(reverse\s+a\s+string|sort\s+an\s+array|invert\s+a\s+binary\s+tree|implement\s+binary\s+search|parse\s+json|read\s+a\s+file|create\s+a\s+promise)\b",
+    r"^(explain|what\s+is)\s+(recursion|polymorphism|inheritance|encapsulation|dependency\s+injection|asynchronous\s+programming|closure|hoisting|pointers?|linked\s+list|stack|queue|binary\s+tree|hash\s+map)\b",
+    r"^syntax\s+of\s+",
+    r"^(find|fix)\s+(the\s+)?(bug|error|issue|exception)\s+in\s+",
+
+    # Math, arithmetic, logic calculations
+    r"^(calculate|compute|solve|evaluate)\s+[\d\s\+\-\*\/\^\(\)\.\%]+$",
+    r"^what\s+is\s+\d+\s*[\+\-\*\/]\s*\d+",
+    r"^solve\s+(the\s+equation|for\s+[a-z])\b",
+    r"^(is\s+\d+\s+a\s+prime|prime\s+factors\s+of|square\s+root\s+of)\b",
+
+    # Text editing, summarization, proofreading, creative writing
+    r"^(summarize|rewrite|paraphrase|proofread|correct\s+grammar)\s+(this|the\s+following|the\s+below)[\s:]",
+    r"^translate\s+(this|the\s+following)[\s:].+into\s+[a-z]+",
+    r"^write\s+(a\s+|an\s+)?(poem|story|essay|cover\s+letter|email|haiku|speech|song|dialogue)\b",
+
+    # Timeless science concepts and foundational general knowledge
+    r"^(what\s+is|explain)\s+(photosynthesis|gravity|quantum\s+mechanics|mitosis|the\s+water\s+cycle|the\s+speed\s+of\s+light|newton'?s\s+laws?|theory\s+of\s+relativity|pythagorean\s+theorem|cellular\s+respiration|plate\s+tectonics|dna|rna)\b",
+    r"^what\s+is\s+the\s+capital\s+of\s+[a-zA-Z\s]+$",
+    r"^who\s+(wrote|painted|discovered|invented)\s+(hamlet|romeo\s+and\s+juliet|mona\s+lisa|gravity|penicillin|electricity|the\s+telephone|the\s+lightbulb)\b"
 ]
 
+# 2. Queries that MUST trigger web search (Current, recent, live, or externally verifiable information)
+INTENT_SEARCH_PATTERNS = [
+    # Explicit search instructions
+    r"\b(search\s+(the\s+)?web|search\s+online|find\s+online|google|browse\s+(the\s+)?web|look\s+up\s+online)\b",
+
+    # Temporal anchors (Today, recent, latest, upcoming)
+    r"\b(today|yesterday|tonight|this\s+week|this\s+month|this\s+year|right\s+now|currently|at\s+present|at\s+the\s+moment|recent(ly)?|latest|newest|upcoming)\b",
+
+    # Recent / future years referencing live events or versions (2024 through 2030)
+    r"\b(202[4-9]|203[0-9])\b",
+
+    # Breaking news, headlines, current events
+    r"\b(breaking\s+news|top\s+headlines|latest\s+news|what\s+happened\s+(to|in|with)|current\s+status\s+of)\b",
+
+    # Weather, local climate, air quality
+    r"\b(weather|temperature|forecast|rain\s+prediction|air\s+quality|aqi)\b",
+
+    # Financial markets, stocks, crypto, valuations
+    r"\b(stock\s+price|market\s+cap|crypto\s+price|share\s+price|exchange\s+rate|bitcoin|ethereum|nasdaq|dow\s+jones|nifty|sensex|valuation\s+of)\b",
+
+    # Sports matches, scores, champions, tournaments
+    r"\b(match\s+score|who\s+won|score\s+of|game\s+score|championship\s+winner|world\s+cup|fifa|ipl|nba|nfl|super\s+bowl|premier\s+league|tournament|standings?)\b",
+
+    # Current officeholders, political leaders, corporate heads
+    r"\b(who\s+is\s+(the\s+)?(current\s+)?(president|prime\s+minister|ceo|governor|mayor|chancellor|pope|king|queen|head\s+of))\b",
+
+    # Software versions, model releases, product launch dates
+    r"\b(latest\s+(version|release|update)|release\s+date\s+of|has\s+.+\s+been\s+released|new\s+features\s+in|changelog)\b"
+]
+
+def analyze_search_intent(prompt: str) -> Dict[str, Any]:
+    """
+    Intelligently analyzes the user's prompt to determine whether web search is necessary.
+    Decides whether to trigger live search or rely purely on local offline neural knowledge.
+    """
+    if not prompt or not prompt.strip():
+        return {
+            "needs_search": False,
+            "reason": "Empty prompt",
+            "category": "empty"
+        }
+
+    p = prompt.strip()
+    p_lower = p.lower()
+
+    # Rule 1: Explicit search commands ALWAYS trigger web search (e.g. "search online for python syntax")
+    if re.search(r"\b(search\s+(the\s+)?web|search\s+online|find\s+online|look\s+up\s+online|browse\s+(the\s+)?web)\b", p_lower):
+        return {
+            "needs_search": True,
+            "reason": "Explicit search requested by user",
+            "category": "explicit_search"
+        }
+
+    # Rule 2: Check exclusions (greetings, simple questions, coding, pure math, timeless knowledge)
+    for pattern in EXCLUSION_PATTERNS:
+        if re.search(pattern, p_lower):
+            return {
+                "needs_search": False,
+                "reason": "Answerable via internal neural model knowledge (greeting/coding/math/timeless concept)",
+                "category": "direct_knowledge"
+            }
+
+    # Rule 3: Check positive temporal and live-data intent triggers
+    for pattern in INTENT_SEARCH_PATTERNS:
+        if re.search(pattern, p_lower):
+            return {
+                "needs_search": True,
+                "reason": "Requires recent, updated, or externally verifiable live information",
+                "category": "temporal_or_live_data"
+            }
+
+    # Default: If not requiring current/recent information, use direct local AI knowledge
+    return {
+        "needs_search": False,
+        "reason": "Standard foundational query answerable from internal model weights",
+        "category": "direct_knowledge"
+    }
+
 def should_trigger_web_search(prompt: str) -> bool:
-    """Detects whether a user prompt likely requires real-time / current web information."""
-    if not prompt:
-        return False
-    p = prompt.lower()
-    return any(kw in p for kw in SEARCH_TRIGGER_KEYWORDS)
+    """Intelligent evaluator for AI Mode automatic web search."""
+    intent = analyze_search_intent(prompt)
+    return intent["needs_search"]
+
+def format_collapsible_sources_markdown(sources: List[Dict[str, str]]) -> str:
+    """
+    Formats web sources into an expandable/collapsible HTML+Markdown block
+    that renders cleanly across all web browsers and markdown viewers.
+    """
+    if not sources:
+        return ""
+
+    count = len(sources)
+    lines = [
+        "",
+        '<details class="noora-sources-accordion" open>',
+        f'<summary class="noora-sources-summary">🌐 <strong>Web Sources & Citations</strong> ({count} retrieved)</summary>',
+        '<div class="noora-sources-body">',
+        ""
+    ]
+
+    for idx, s in enumerate(sources, 1):
+        title = s.get("title", "Web Source").replace("[", "(").replace("]", ")")
+        url = s.get("url", "#")
+        source = s.get("source") or "Web"
+        snippet = s.get("snippet", "")
+        lines.append(f"{idx}. [{title}]({url}) — *{source}*")
+        if snippet:
+            lines.append(f"   > {snippet[:180]}...")
+
+    lines.extend([
+        "",
+        "</div>",
+        "</details>",
+        ""
+    ])
+    return "\n".join(lines)
 
 def format_search_context(search_data: Dict[str, Any]) -> str:
     """Formats retrieved web results into a clean system instruction context."""

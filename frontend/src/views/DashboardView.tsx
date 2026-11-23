@@ -350,14 +350,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
               <span className="text-slate-500">
                 Key: <code className="text-amber-400 font-mono">{activeRawKey}</code>
               </span>
-              <label className="flex items-center space-x-1.5 text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg font-medium cursor-pointer">
+              <label className="flex items-center space-x-1.5 text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg font-medium cursor-pointer" title="AI automatically determines whether live web search is needed">
                 <input
                   type="checkbox"
                   checked={quickWebSearch}
                   onChange={(e) => setQuickWebSearch(e.target.checked)}
                   className="accent-indigo-500 rounded cursor-pointer"
                 />
-                <span>🌐 Search Web (Online)</span>
+                <span>🌐 AI Mode (Auto Search)</span>
               </label>
             </div>
             <button
@@ -366,7 +366,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
               className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all active:scale-95 disabled:opacity-50"
             >
               <i className={`bx ${testingInference ? 'bx-loader-alt animate-spin' : 'bx-send'}`}></i>
-              <span>{testingInference ? (quickWebSearch ? 'Searching & Generating...' : 'Generating...') : 'Send Prompt'}</span>
+              <span>{testingInference ? 'Analyzing & Generating...' : 'Send Prompt'}</span>
             </button>
           </div>
         </div>
