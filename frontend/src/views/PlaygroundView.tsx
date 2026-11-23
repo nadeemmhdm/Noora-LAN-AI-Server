@@ -32,6 +32,8 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
   const [copiedKey, setCopiedKey] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(512);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(true);
+  const [isOnline, setIsOnline] = useState<boolean>(true);
   const [systemPrompt, setSystemPrompt] = useState('You are Noora, an intelligent and courteous local AI assistant developed and trained by Nadeem. Running on Noora LAN AI Server.');
   const [showSettings, setShowSettings] = useState(false);
   const [lastLatencyMs, setLastLatencyMs] = useState<number | null>(null);
@@ -57,6 +59,15 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
       }
     }).catch(() => {});
   }, [keys]);
+
+  // Check live internet connectivity
+  useEffect(() => {
+    api.getConnectivity().then(c => setIsOnline(c.online)).catch(() => setIsOnline(false));
+    const timer = setInterval(() => {
+      api.getConnectivity().then(c => setIsOnline(c.online)).catch(() => setIsOnline(false));
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
   const copyWorkingKey = () => {
     if (activeRawKey) {
@@ -128,6 +139,7 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
         },
         body: JSON.stringify({
           model: selectedModel || 'local-ai',
+          web_search: webSearchEnabled,
           messages: reqMessages,
           temperature,
           max_tokens: maxTokens,
@@ -209,9 +221,9 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
 
   const samplePrompts = [
     'Who are you and who developed you?',
+    'Search online: What are the latest developments in artificial intelligence in 2024?',
     'Write a quick Python script to download a webpage.',
-    'Explain how neural networks learn in 3 simple bullet points.',
-    'What are the advantages of running an AI model on a local LAN server?'
+    'Explain how neural networks learn in 3 simple bullet points.'
   ];
 
   return (
@@ -267,8 +279,26 @@ export const PlaygroundView: React.FC<PlaygroundViewProps> = ({ status, models, 
           </button>
         </div>
 
-        {/* Actions */}
+        {/* Actions & Web Search */}
         <div className="flex items-center space-x-2">
+          {/* Web Search Toggle */}
+          <button
+            onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center space-x-1.5 transition-all ${
+              webSearchEnabled
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm shadow-indigo-600/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
+            }`}
+            title={isOnline ? "Web Search enabled (Searches online when needed)" : "Internet offline (Local model only)"}
+          >
+            <i className={`bx ${webSearchEnabled ? 'bx-globe' : 'bx-wifi-off'} text-sm`}></i>
+            <span>Web Search: {webSearchEnabled ? 'ON' : 'OFF'}</span>
+            <span
+              className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`}
+              title={isOnline ? "Internet Connected" : "Internet Offline"}
+            ></span>
+          </button>
+
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`px-2.5 py-1 rounded-lg border text-xs flex items-center space-x-1 transition-all ${

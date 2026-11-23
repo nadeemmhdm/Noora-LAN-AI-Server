@@ -1,6 +1,7 @@
 import type {
   ServerStatus, ModelItem, CatalogModel, DownloadProgress,
-  ApiKeyItem, DeviceItem, RequestLogItem, SystemLogItem, FirewallStatus
+  ApiKeyItem, DeviceItem, RequestLogItem, SystemLogItem, FirewallStatus,
+  ConnectivityStatus, WebSearchResult
 } from '../types';
 
 const BASE_URL = '';
@@ -95,5 +96,18 @@ export const api = {
   updateSettings: (settings: Record<string, string>) => fetchJson<{ success: boolean; message: string }>('/api/settings', {
     method: 'POST',
     body: JSON.stringify(settings)
+  }),
+
+  // Web Search & Online Connectivity
+  getConnectivity: () => fetchJson<ConnectivityStatus>('/api/network/connectivity'),
+  searchWeb: (query: string, max_results: number = 4) => fetchJson<{
+    online: boolean;
+    latency_ms: number;
+    query: string;
+    results: WebSearchResult[];
+    count: number;
+  }>('/api/web_search', {
+    method: 'POST',
+    body: JSON.stringify({ query, max_results })
   })
 };

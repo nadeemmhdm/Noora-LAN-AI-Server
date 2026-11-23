@@ -18,6 +18,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
   const [testResponse, setTestResponse] = useState('');
   const [testingInference, setTestingInference] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [quickWebSearch, setQuickWebSearch] = useState(false);
 
   useEffect(() => {
     api.getActiveKeyInfo().then(data => {
@@ -77,7 +78,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
         },
         body: JSON.stringify({
           messages: [{ role: 'user', content: testPrompt }],
-          max_tokens: 100,
+          web_search: quickWebSearch,
+          max_tokens: 150,
           stream: false
         })
       });
@@ -120,6 +122,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
             </span>
             <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
               Developed & Trained by Nadeem
+            </span>
+            <span className={`text-xs px-2.5 py-1 rounded-full font-semibold border flex items-center gap-1.5 ${
+              status?.is_online
+                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}>
+              <i className={`bx ${status?.is_online ? 'bx-globe' : 'bx-wifi-off'}`}></i>
+              <span>{status?.is_online ? '🌐 Online (Web Search Ready)' : '🔒 Offline (Local Only)'}</span>
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
@@ -335,17 +345,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
             className="w-full glass-input rounded-xl p-3 text-sm text-slate-200 placeholder-slate-500 focus:outline-none resize-none"
           ></textarea>
 
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500">
-              Using Key: <code className="text-amber-400 font-mono">{activeRawKey}</code>
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-3 text-xs">
+              <span className="text-slate-500">
+                Key: <code className="text-amber-400 font-mono">{activeRawKey}</code>
+              </span>
+              <label className="flex items-center space-x-1.5 text-indigo-300 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={quickWebSearch}
+                  onChange={(e) => setQuickWebSearch(e.target.checked)}
+                  className="accent-indigo-500 rounded cursor-pointer"
+                />
+                <span>🌐 Search Web (Online)</span>
+              </label>
+            </div>
             <button
               onClick={runTestPrompt}
               disabled={testingInference || !testPrompt.trim()}
               className="flex items-center space-x-2 px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-md shadow-indigo-600/30 transition-all active:scale-95 disabled:opacity-50"
             >
               <i className={`bx ${testingInference ? 'bx-loader-alt animate-spin' : 'bx-send'}`}></i>
-              <span>{testingInference ? 'Generating...' : 'Send Prompt'}</span>
+              <span>{testingInference ? (quickWebSearch ? 'Searching & Generating...' : 'Generating...') : 'Send Prompt'}</span>
             </button>
           </div>
         </div>

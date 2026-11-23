@@ -151,7 +151,10 @@ def init_db():
         "rate_limit_default_rpm": "240",
         "log_retention_days": "14",
         "dark_mode": "true",
-        "selected_interface": "auto"
+        "selected_interface": "auto",
+        "enable_web_search": "true",
+        "web_search_mode": "auto",
+        "web_search_max_results": "4"
     }
     for k, v in default_settings.items():
         cursor.execute("""

@@ -60,8 +60,9 @@ Generates a chat completion for a list of messages. Supports both synchronous JS
 **Request Parameters:**
 | Parameter | Type | Required | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `model` | string | No | `"local-ai"` | Target model alias or filename |
+| `model` | string | No | `"local-ai"` | Target model alias or filename (`N.1 Faster`, `N.1 Pro`, `N.1 Core`) |
 | `messages` | array | Yes | - | Array of message objects (`role`, `content`) |
+| `web_search` | boolean | No | `null` | Optional explicit toggle for online web search. If `null`, uses server setting (`auto`). Only triggers when system is online. |
 | `temperature` | float | No | `0.7` | Sampling temperature between 0.0 and 1.5 |
 | `top_p` | float | No | `0.95` | Nucleus sampling probability threshold |
 | `max_tokens` | integer | No | `1024` | Maximum number of tokens to generate |
@@ -163,7 +164,48 @@ Public health status endpoint.
 ```
 
 ### `GET /api/server/status`
-Returns real-time telemetry including CPU load, RAM allocation, engine memory RSS, active clients, and request statistics.
+Returns real-time telemetry including CPU load, RAM allocation, engine memory RSS, active clients, request statistics, and internet online connectivity status.
+
+### `GET /api/network/connectivity`
+Checks whether the host machine has active external internet connectivity and returns latency and web search configuration.
+
+**Response (200 OK):**
+```json
+{
+  "online": true,
+  "latency_ms": 68.4,
+  "web_search_enabled": true,
+  "web_search_mode": "auto"
+}
+```
+
+### `POST /api/web_search`
+Direct endpoint to perform live zero-API-key web queries without passing through LLM inference.
+
+**Request Body:**
+```json
+{
+  "query": "latest release notes python",
+  "max_results": 3
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "query": "latest release notes python",
+  "total_results": 3,
+  "results": [
+    {
+      "title": "Python Release Python 3.13.2",
+      "url": "https://www.python.org/downloads/release/python-3132/",
+      "snippet": "Python 3.13.2 is the newest security bugfix release of the Python 3.13 series.",
+      "domain": "python.org"
+    }
+  ],
+  "latency_ms": 210.5
+}
+```
 
 ---
 

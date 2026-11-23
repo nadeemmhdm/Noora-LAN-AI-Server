@@ -29,6 +29,9 @@ from backend.network_utils import (
     get_network_interfaces, get_primary_lan_ip, is_private_lan_ip, resolve_hostname
 )
 from backend.firewall import check_firewall_rule, add_firewall_rule, remove_firewall_rule
+from backend.web_search import (
+    check_internet_connectivity, perform_web_search, should_trigger_web_search, format_search_context
+)
 
 # Initialize Database on startup
 init_db()
@@ -117,6 +120,7 @@ class ChatCompletionRequest(BaseModel):
     top_p: Optional[float] = 0.95
     max_tokens: Optional[int] = 2048
     stream: Optional[bool] = False
+    web_search: Optional[bool] = None
 
 class CompletionRequest(BaseModel):
     model: Optional[str] = "N.1 Faster"
@@ -124,6 +128,11 @@ class CompletionRequest(BaseModel):
     max_tokens: Optional[int] = 1024
     temperature: Optional[float] = 0.7
     stream: Optional[bool] = False
+    web_search: Optional[bool] = None
+
+class SearchQueryRequest(BaseModel):
+    query: str
+    max_results: Optional[int] = 4
 
 class KeyCreateRequest(BaseModel):
     name: str
@@ -140,6 +149,9 @@ class SettingsUpdateRequest(BaseModel):
     lan_access_only: Optional[str] = None
     rate_limit_default_rpm: Optional[str] = None
     dark_mode: Optional[str] = None
+    enable_web_search: Optional[str] = None
+    web_search_mode: Optional[str] = None
+    web_search_max_results: Optional[str] = None
 
 # ----------------- System & Health Endpoints -----------------
 
@@ -192,6 +204,9 @@ async def get_server_status():
     conn.close()
 
     active_key = get_active_working_key()
+    is_online, net_latency = check_internet_connectivity()
+    web_search_enabled = get_server_setting("enable_web_search", "true").lower() == "true"
+    web_search_mode = get_server_setting("web_search_mode", "auto")
 
     return {
         **engine_stats,
@@ -203,6 +218,10 @@ async def get_server_status():
         "api_base_url": f"http://{lan_ip}:{port}/v1",
         "active_working_key": active_key["raw_key"] if active_key else None,
         "active_key_prefix": active_key["key_prefix"] if active_key else None,
+        "is_online": is_online,
+        "internet_latency_ms": net_latency,
+        "web_search_enabled": web_search_enabled,
+        "web_search_mode": web_search_mode,
         "total_requests": total_requests,
         "successful_requests": successful_requests,
         "failed_requests": failed_requests,
@@ -222,14 +241,33 @@ async def get_hardware_info():
         "available_ram_gb": round(stats["system_ram_free_mb"] / 1024, 2)
     }
 
+@app.get("/api/network/connectivity")
+async def get_network_connectivity():
+    online, latency = check_internet_connectivity()
+    return {
+        "online": online,
+        "latency_ms": latency,
+        "web_search_enabled": get_server_setting("enable_web_search", "true").lower() == "true",
+        "web_search_mode": get_server_setting("web_search_mode", "auto")
+    }
+
+@app.post("/api/web_search")
+async def run_explicit_web_search(req: SearchQueryRequest):
+    return perform_web_search(req.query, max_results=req.max_results or 4)
+
 # ----------------- V1 Landing & Status Page -----------------
 
-def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model: str, server_status: str, cpu_model: str) -> str:
+def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model: str, server_status: str, cpu_model: str, is_internet_online: bool = True) -> str:
     base_url = f"http://{lan_ip}:{port}/v1"
     is_online = (server_status == "ONLINE")
     status_badge_class = "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" if is_online else "bg-amber-500/20 text-amber-400 border-amber-500/30"
     status_dot_class = "bg-emerald-400 animate-pulse" if is_online else "bg-amber-400"
     status_text = "Server Online & Ready" if is_online else f"Server {server_status}"
+
+    net_badge_class = "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" if is_internet_online else "bg-slate-800 text-slate-400 border-slate-700"
+    net_icon = "bx-globe" if is_internet_online else "bx-wifi-off"
+    net_text = "Online (Web Search Ready)" if is_internet_online else "Offline (Local Only)"
+    websearch_checked = "checked" if is_internet_online else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en" class="dark">
@@ -295,7 +333,11 @@ def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model
         </div>
       </div>
 
-      <div class="flex items-center space-x-3 w-full sm:w-auto justify-between sm:justify-end">
+      <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+        <div class="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border font-medium text-xs {net_badge_class}">
+          <i class="bx {net_icon}"></i>
+          <span>{net_text}</span>
+        </div>
         <div class="flex items-center space-x-2 px-3 py-1.5 rounded-xl border font-medium text-xs {status_badge_class}">
           <span class="w-2 h-2 rounded-full {status_dot_class}"></span>
           <span>{status_text}</span>
@@ -411,7 +453,11 @@ def render_v1_landing_html(lan_ip: str, port: int, active_key: str, active_model
           Test Prompt Directly in Browser
         </h3>
         <div class="flex items-center space-x-2 text-xs">
-          <span class="text-slate-400 hidden sm:inline">Select Model:</span>
+          <label class="flex items-center space-x-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-indigo-300 font-medium cursor-pointer hover:border-indigo-500/50 transition-all">
+            <input type="checkbox" id="chat-web-search-toggle" {websearch_checked} class="accent-indigo-500 cursor-pointer">
+            <span>🌐 Web Search</span>
+          </label>
+          <span class="text-slate-400 hidden sm:inline">Model:</span>
           <select id="chat-model-select" class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1 text-slate-200 text-xs font-semibold focus:outline-none">
             <option value="N.1 Faster">Noora N.1 Faster (Fast)</option>
             <option value="N.1 Pro">Noora N.1 Pro (Reasoning)</option>
@@ -538,10 +584,13 @@ print(res.choices[0].message.content)</pre>
       const chosenModel = modelSelect ? modelSelect.value : 'N.1 Faster';
       if (modelLabel) modelLabel.innerText = chosenModel;
 
+      const webSearchToggle = document.getElementById('chat-web-search-toggle');
+      const useWebSearch = webSearchToggle ? webSearchToggle.checked : false;
+
       btn.disabled = true;
-      btn.innerHTML = '<i class="bx bx-loader-alt animate-spin"></i><span>Generating...</span>';
+      btn.innerHTML = '<i class="bx bx-loader-alt animate-spin"></i><span>' + (useWebSearch ? 'Searching & Generating...' : 'Generating...') + '</span>';
       container.classList.remove('hidden');
-      respText.innerText = 'Connecting to Noora AI engine...';
+      respText.innerText = useWebSearch ? 'Searching web & connecting to Noora AI engine...' : 'Connecting to Noora AI engine...';
       latencyLabel.innerText = '';
 
       const startTime = performance.now();
@@ -555,11 +604,12 @@ print(res.choices[0].message.content)</pre>
           }},
           body: JSON.stringify({{
             model: chosenModel,
+            web_search: useWebSearch,
             messages: [
               {{"role": "system", "content": "You are Noora, an intelligent and courteous AI assistant developed and trained by Nadeem. Running locally on Noora LAN AI Server."}},
               {{"role": "user", "content": prompt}}
             ],
-            max_tokens: 300,
+            max_tokens: 400,
             stream: false
           }})
         }});
@@ -635,13 +685,15 @@ async def v1_base_status(request: Request):
         })
 
     # Return rich interactive HTML landing page
+    is_net_online, _ = check_internet_connectivity()
     html_content = render_v1_landing_html(
         lan_ip=lan_ip,
         port=port,
         active_key=active_key_str,
         active_model=active_model,
         server_status=engine_stats["status"],
-        cpu_model=CPU_MODEL_NAME
+        cpu_model=CPU_MODEL_NAME,
+        is_internet_online=is_net_online
     )
     return HTMLResponse(content=html_content, status_code=200)
 
@@ -757,6 +809,44 @@ async def chat_completions(
             "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant powered by Noora N.1. Developed and trained by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency."
         })
 
+    # ---------------- Web Search Augmentation (Online Only) ----------------
+    latest_user_text = ""
+    for msg in reversed(req.messages):
+        if msg.role == "user" and msg.content.strip():
+            latest_user_text = msg.content.strip()
+            break
+
+    cfg_enable_search = get_server_setting("enable_web_search", "true").lower() == "true"
+    cfg_search_mode = get_server_setting("web_search_mode", "auto").lower()
+    max_search_res = int(get_server_setting("web_search_max_results", "4"))
+
+    perform_search = False
+    if req.web_search is True:
+        perform_search = True
+    elif req.web_search is False:
+        perform_search = False
+    elif cfg_enable_search:
+        if cfg_search_mode == "always":
+            perform_search = bool(latest_user_text and len(latest_user_text) >= 3)
+        elif cfg_search_mode == "auto":
+            perform_search = should_trigger_web_search(latest_user_text)
+
+    search_sources = []
+    if perform_search and latest_user_text:
+        online, _ = check_internet_connectivity()
+        if online:
+            log_system_event("INFO", "WEB_SEARCH", f"Running live web search for: '{latest_user_text[:60]}'")
+            search_res = perform_web_search(latest_user_text, max_results=max_search_res)
+            if search_res.get("results"):
+                search_sources = search_res["results"]
+                web_context = format_search_context(search_res)
+                messages_payload[0]["content"] += f"\n\n{web_context}"
+                log_system_event("INFO", "WEB_SEARCH", f"Retrieved {len(search_sources)} search results successfully.")
+        else:
+            log_system_event("INFO", "WEB_SEARCH", "Server is offline. Web search skipped; using local offline model.")
+            if req.web_search is True:
+                messages_payload[0]["content"] += "\n\n[System Note: Web search was requested, but server currently has no internet connection. Answering using internal local offline knowledge.]"
+
     # Context Guardrail: Prevent exceed_context_size_error on big questions
     # Estimate token count (~3.5 chars per token)
     total_estimated_tokens = sum(len(m["content"]) for m in messages_payload) // 3.5
@@ -804,6 +894,16 @@ async def chat_completions(
                             return
                         async for line in resp.aiter_lines():
                             if line:
+                                if line.startswith("data: ") and line.strip().endswith("[DONE]") and search_sources:
+                                    sources_text = "\n\n🌐 **Web Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']}) — *{s['source']}*" for s in search_sources])
+                                    source_chunk = {
+                                        "choices": [{
+                                            "delta": {"content": sources_text},
+                                            "index": 0,
+                                            "finish_reason": None
+                                        }]
+                                    }
+                                    yield f"data: {json.dumps(source_chunk)}\n\n"
                                 yield f"{line}\n\n"
                                 if line.startswith("data: ") and not line.strip().endswith("[DONE]"):
                                     try:
@@ -842,8 +942,13 @@ async def chat_completions(
                 tokens_prompt = usage.get("prompt_tokens", 0)
                 tokens_completion = usage.get("completion_tokens", 0)
 
-                # Set model name in response
+                # Set model name and attach sources in response
                 data["model"] = target_model_info["name"] if target_model_info else "Noora N.1 Faster"
+                if search_sources:
+                    data["sources"] = search_sources
+                    sources_text = "\n\n🌐 **Web Sources:**\n" + "\n".join([f"- [{s['title']}]({s['url']}) — *{s['source']}*" for s in search_sources])
+                    if data.get("choices") and len(data["choices"]) > 0:
+                        data["choices"][0]["message"]["content"] += sources_text
 
                 log_api_request(
                     client_ip, "/v1/chat/completions", "POST", 200, latency_ms,

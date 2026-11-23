@@ -22,6 +22,10 @@ export interface ServerStatus {
   api_base_url: string;
   active_working_key?: string;
   active_key_prefix?: string;
+  is_online?: boolean;
+  internet_latency_ms?: number;
+  web_search_enabled?: boolean;
+  web_search_mode?: string;
   total_requests: number;
   successful_requests: number;
   failed_requests: number;
@@ -114,4 +118,18 @@ export interface FirewallStatus {
   port: number;
   details?: string;
   message?: string;
+}
+
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  source: string;
+  snippet: string;
+}
+
+export interface ConnectivityStatus {
+  online: boolean;
+  latency_ms: number;
+  web_search_enabled: boolean;
+  web_search_mode: string;
 }

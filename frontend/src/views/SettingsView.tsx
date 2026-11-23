@@ -1,25 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { FirewallStatus } from '../types';
+import { FirewallStatus, ConnectivityStatus } from '../types';
 import { api } from '../services/api';
 
 export const SettingsView: React.FC = () => {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [firewall, setFirewall] = useState<FirewallStatus | null>(null);
   const [interfaces, setInterfaces] = useState<any[]>([]);
+  const [connectivity, setConnectivity] = useState<ConnectivityStatus | null>(null);
   const [saving, setSaving] = useState(false);
   const [fwLoading, setFwLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const fetchConfig = async () => {
     try {
-      const [sData, fData, netData] = await Promise.all([
+      const [sData, fData, netData, cData] = await Promise.all([
         api.getSettings(),
         api.getFirewallStatus(),
-        api.getInterfaces()
+        api.getInterfaces(),
+        api.getConnectivity().catch(() => null)
       ]);
       setSettings(sData);
       setFirewall(fData);
       setInterfaces(netData.interfaces || []);
+      if (cData) setConnectivity(cData);
     } catch (e: any) {
       console.error(e);
     }
@@ -226,6 +229,72 @@ export const SettingsView: React.FC = () => {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Real-Time Web Search & Online Connectivity */}
+        <div className="glass-card p-6 rounded-2xl space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+              <i className="bx bx-globe text-cyan-400"></i>
+              Real-Time Web Search (Online Mode Only)
+            </h3>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
+              connectivity?.online
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${connectivity?.online ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
+              {connectivity?.online ? `Internet Online (${connectivity.latency_ms?.toFixed(0) || 0}ms)` : 'Offline (Local-Only Active)'}
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-400 leading-relaxed">
+            When online, Noora searches the live web using built-in zero-API-key scrapers and injects real-time factual knowledge into responses with source links. When offline, Noora automatically skips searching and answers purely with local neural weights.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+            <div>
+              <label className="text-xs font-medium text-slate-300 block mb-1.5">Search Trigger Mode</label>
+              <select
+                value={settings.web_search_mode || 'auto'}
+                onChange={(e) => setSettings({ ...settings, web_search_mode: e.target.value })}
+                className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs text-slate-200 focus:outline-none"
+              >
+                <option value="auto">Auto-detect (Current events, news, or explicit queries)</option>
+                <option value="always">Always Online Search (Every query searches web if connected)</option>
+                <option value="disabled">Disabled (Strictly offline neural inference)</option>
+              </select>
+              <span className="text-[11px] text-slate-500 mt-1 block">Default: Auto-detect keeps inference fast.</span>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-300 block mb-1.5">Max Web Search Sources</label>
+              <input
+                type="number"
+                min={1}
+                max={6}
+                value={settings.web_search_max_results || '4'}
+                onChange={(e) => setSettings({ ...settings, web_search_max_results: e.target.value })}
+                className="w-full glass-input px-3.5 py-2.5 rounded-xl text-xs text-slate-200 focus:outline-none"
+              />
+              <span className="text-[11px] text-slate-500 mt-1 block">Number of citation links and excerpts injected into context.</span>
+            </div>
+          </div>
+
+          <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+            <div>
+              <span className="text-xs font-semibold text-white block">Enable Global Web Search</span>
+              <span className="text-[11px] text-slate-400">
+                Master toggle for live web searching in chat completions and the interactive playground.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.enable_web_search !== 'false'}
+              onChange={(e) => setSettings({ ...settings, enable_web_search: e.target.checked ? 'true' : 'false' })}
+              className="w-4 h-4 rounded text-indigo-600 focus:ring-0 bg-slate-900 border-slate-700 cursor-pointer"
+            />
           </div>
         </div>
 

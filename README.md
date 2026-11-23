@@ -14,6 +14,7 @@
 - **Developer:** **Nadeem**
 - **Hardware Targets:** Intel Core i5, 4GB RAM, CPU-only inference.
 - **Privacy Guarantee:** 100% on-device local execution; zero prompt or secret logging; air-gapped capable.
+- **🌐 Real-Time Web Search:** Online-only web search integration (Zero API keys required). When connected to Wi-Fi/Internet, retrieves live factual data and source links; when offline, gracefully runs purely local neural inference without network errors.
 
 ---
 
@@ -173,8 +174,9 @@ http://<YOUR_LAN_IP>:8080/v1
 ```
 *(Displays server status, active API key with 1-click copy, and an in-browser live prompt console)*
 
-### 2. Test via cURL
+### 2. Test via cURL (Local or With Online Web Search)
 ```bash
+# Standard local chat completion
 curl -X POST "http://localhost:8080/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer sk-local-noora-default-lan-key" \
@@ -182,6 +184,17 @@ curl -X POST "http://localhost:8080/v1/chat/completions" \
     "model": "N.1 Faster",
     "messages": [{"role": "user", "content": "Hello Noora!"}],
     "max_tokens": 50
+  }'
+
+# Real-time web search request (Online only)
+curl -X POST "http://localhost:8080/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-local-noora-default-lan-key" \
+  -d '{
+    "model": "N.1 Faster",
+    "messages": [{"role": "user", "content": "What is the latest release news in technology?"}],
+    "web_search": true,
+    "max_tokens": 150
   }'
 ```
 

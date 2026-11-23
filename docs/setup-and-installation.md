@@ -230,6 +230,16 @@ $response.choices[0].message.content
 
 ---
 
+## 🌐 Real-Time Web Search Integration (Online Mode Only)
+
+Noora AI includes built-in live web search capability requiring **zero external API keys** or paid search service subscriptions:
+
+- **When Online (Host has internet connectivity):** Noora automatically detects questions requesting recent events, current versions, or news, performs live web queries via organic web scrapers and encyclopedic APIs, and enriches its response with clickable citation sources.
+- **When Offline (No internet or air-gapped Wi-Fi):** Noora detects that internet is unreachable within milliseconds via lightweight socket checks and transparently falls back to 100% offline local neural inference. No timeouts, no crashes, and zero network errors.
+- **Manual Control:** You can explicitly force or disable web search per request by passing `"web_search": true` or `"web_search": false` in the `/v1/chat/completions` JSON body, or toggle it in the Web Playground.
+
+---
+
 ## 🛠️ Troubleshooting Setup Issues
 
 | Problem | Cause | Solution |
