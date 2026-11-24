@@ -1,7 +1,9 @@
 import type {
   ServerStatus, ModelItem, CatalogModel, DownloadProgress,
   ApiKeyItem, DeviceItem, RequestLogItem, SystemLogItem, FirewallStatus,
-  ConnectivityStatus, WebSearchResult
+  ConnectivityStatus, WebSearchResult,
+  KnowledgeDocument, KnowledgeChunk, KnowledgeSearchResult,
+  KnowledgeListResponse, KnowledgeTrainResult
 } from '../types';
 
 const BASE_URL = '';
@@ -109,5 +111,22 @@ export const api = {
   }>('/api/web_search', {
     method: 'POST',
     body: JSON.stringify({ query, max_results })
+  }),
+
+  // Knowledge & AI Training
+  getKnowledgeDocuments: () => fetchJson<KnowledgeListResponse>('/api/knowledge/documents'),
+  getKnowledgeDocument: (id: number) => fetchJson<{ document: KnowledgeDocument; chunks: KnowledgeChunk[] }>(`/api/knowledge/documents/${id}`),
+  deleteKnowledgeDocument: (id: number) => fetchJson<{ success: boolean; message: string }>(`/api/knowledge/documents/${id}`, { method: 'DELETE' }),
+  trainKnowledgeText: (filename: string, content: string) => fetchJson<KnowledgeTrainResult>('/api/knowledge/train-text', {
+    method: 'POST',
+    body: JSON.stringify({ filename, content })
+  }),
+  uploadKnowledgeFile: (filename: string, content: string) => fetchJson<KnowledgeTrainResult>('/api/knowledge/upload', {
+    method: 'POST',
+    body: JSON.stringify({ filename, content })
+  }),
+  testKnowledgeQuery: (query: string, top_k: number = 3) => fetchJson<{ query: string; matches: KnowledgeSearchResult[]; count: number }>('/api/knowledge/query', {
+    method: 'POST',
+    body: JSON.stringify({ query, top_k })
   })
 };

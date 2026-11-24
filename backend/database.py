@@ -141,6 +141,38 @@ def init_db():
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_app_logs_timestamp ON application_logs(timestamp);")
 
+    # 8. AI Trained Knowledge Documents Table
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS knowledge_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT,
+        word_count INTEGER DEFAULT 0,
+        chunk_count INTEGER DEFAULT 0,
+        file_size_bytes INTEGER DEFAULT 0,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kdocs_created ON knowledge_documents(created_at);")
+
+    # 9. AI Trained Knowledge Chunks Table (Semantic Units)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS knowledge_chunks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        doc_id INTEGER NOT NULL,
+        section_title TEXT,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        keywords TEXT,
+        created_at REAL NOT NULL,
+        FOREIGN KEY (doc_id) REFERENCES knowledge_documents(id) ON DELETE CASCADE
+    );
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kchunks_doc_id ON knowledge_chunks(doc_id);")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_kchunks_section ON knowledge_chunks(section_title);")
+
     # Seed Default Settings
     default_settings = {
         "server_port": "8080",
@@ -424,3 +456,78 @@ def prune_old_logs(days: int = 14):
     cursor.execute("DELETE FROM application_logs WHERE timestamp < ?", (cutoff,))
     conn.commit()
     conn.close()
+
+# ----------------- AI Trained Knowledge Base Memory -----------------
+
+def insert_knowledge_document(filename: str, title: str, summary: str, word_count: int, chunk_count: int, file_size_bytes: int) -> int:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = time.time()
+    cursor.execute("""
+    INSERT INTO knowledge_documents (filename, title, summary, word_count, chunk_count, file_size_bytes, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (filename, title, summary, word_count, chunk_count, file_size_bytes, now, now))
+    doc_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return doc_id
+
+def insert_knowledge_chunks(doc_id: int, chunks: list):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = time.time()
+    for idx, c in enumerate(chunks):
+        cursor.execute("""
+        INSERT INTO knowledge_chunks (doc_id, section_title, chunk_index, content, keywords, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """, (doc_id, c.get("section_title", "General"), idx, c.get("content", ""), c.get("keywords", ""), now))
+    conn.commit()
+    conn.close()
+
+def get_all_knowledge_documents() -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_documents ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def get_knowledge_document(doc_id: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_documents WHERE id = ?", (doc_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def get_chunks_by_document(doc_id: int) -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM knowledge_chunks WHERE doc_id = ? ORDER BY chunk_index ASC", (doc_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def delete_knowledge_document(doc_id: int) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM knowledge_chunks WHERE doc_id = ?", (doc_id,))
+    cursor.execute("DELETE FROM knowledge_documents WHERE id = ?", (doc_id,))
+    changed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return changed
+
+def get_all_knowledge_chunks_with_doc_info() -> list:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT c.id, c.doc_id, c.section_title, c.chunk_index, c.content, c.keywords, 
+           d.filename, d.title as doc_title
+    FROM knowledge_chunks c
+    JOIN knowledge_documents d ON c.doc_id = d.id
+    ORDER BY c.doc_id, c.chunk_index
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

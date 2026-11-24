@@ -11,6 +11,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab, sta
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: 'bx-grid-alt' },
     { id: 'playground', label: 'Chat Playground', icon: 'bx-chat' },
+    { id: 'training', label: 'AI Training', icon: 'bx-book-reader' },
     { id: 'platforms', label: 'Connect Platforms', icon: 'bx-broadcast' },
     { id: 'models', label: 'Models', icon: 'bx-chip' },
     { id: 'apikeys', label: 'API Keys', icon: 'bx-key' },

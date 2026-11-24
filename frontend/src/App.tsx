@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './views/DashboardView';
 import { PlaygroundView } from './views/PlaygroundView';
+import { TrainingView } from './views/TrainingView';
 import { PlatformsView } from './views/PlatformsView';
 import { ModelsView } from './views/ModelsView';
 import { ApiKeysView } from './views/ApiKeysView';
@@ -68,7 +69,7 @@ export const App: React.FC = () => {
         <header className="h-16 border-b border-slate-800/80 px-8 flex items-center justify-between backdrop-blur-md bg-slate-950/40 z-10 select-none">
           <div className="flex items-center space-x-3">
             <span className="text-sm font-bold text-white capitalize">
-              {currentTab === 'playground' ? 'Chat Playground' : currentTab === 'platforms' ? 'Connect Platforms' : currentTab}
+              {currentTab === 'playground' ? 'Chat Playground' : currentTab === 'training' ? 'AI Training & Knowledge' : currentTab === 'platforms' ? 'Connect Platforms' : currentTab}
             </span>
             <span className="text-slate-600">•</span>
             <span className="text-xs text-slate-400 font-mono">
@@ -112,6 +113,11 @@ export const App: React.FC = () => {
                 models={models}
                 keys={keys}
                 refreshStatus={refreshStatus}
+              />
+            )}
+            {currentTab === 'training' && (
+              <TrainingView
+                status={status}
               />
             )}
             {currentTab === 'platforms' && (

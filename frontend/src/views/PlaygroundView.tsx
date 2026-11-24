@@ -17,35 +17,46 @@ interface ParsedSource {
   snippet?: string;
 }
 
-function parseMessageContent(rawContent: string): { mainText: string; sources: ParsedSource[] } {
-  if (!rawContent) return { mainText: '', sources: [] };
+interface ParsedMemorySource {
+  docName: string;
+  section: string;
+  snippet?: string;
+}
 
-  // Check for <details class="noora-sources-accordion"
-  const detailsIndex = rawContent.indexOf('<details class="noora-sources-accordion"');
-  const legacyIndex = rawContent.indexOf('🌐 **Web Sources:**');
+function parseMessageContent(rawContent: string): {
+  mainText: string;
+  sources: ParsedSource[];
+  memories: ParsedMemorySource[];
+} {
+  if (!rawContent) return { mainText: '', sources: [], memories: [] };
 
-  const splitIndex = detailsIndex !== -1 ? detailsIndex : legacyIndex;
+  const webDetailsIndex = rawContent.indexOf('<details class="noora-sources-accordion"');
+  const webLegacyIndex = rawContent.indexOf('🌐 **Web Sources:**');
+  const memDetailsIndex = rawContent.indexOf('<details class="noora-memory-accordion');
+
+  const indices = [webDetailsIndex, webLegacyIndex, memDetailsIndex].filter(i => i !== -1);
+  const splitIndex = indices.length > 0 ? Math.min(...indices) : -1;
+
   if (splitIndex === -1) {
-    return { mainText: rawContent.trim(), sources: [] };
+    return { mainText: rawContent.trim(), sources: [], memories: [] };
   }
 
   const mainText = rawContent.slice(0, splitIndex).trim();
-  const sourcesPart = rawContent.slice(splitIndex);
+  const appendPart = rawContent.slice(splitIndex);
 
+  // Extract web sources
   const sources: ParsedSource[] = [];
-  // Match markdown links: [Title](url) — *Source*
   const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)(?:\s*—\s*\*([^*]+)\*)?/g;
   let match;
-  while ((match = linkRegex.exec(sourcesPart)) !== null) {
+  while ((match = linkRegex.exec(appendPart)) !== null) {
     const title = match[1];
     const url = match[2];
     let domain = match[3] || '';
     if (!domain && url.includes('://')) {
       domain = url.split('://')[1].split('/')[0];
     }
-    // Check if there is a blockquote snippet after it
     const afterPos = match.index + match[0].length;
-    const snippetMatch = sourcesPart.slice(afterPos, afterPos + 300).match(/>\s*([^\n<]+)/);
+    const snippetMatch = appendPart.slice(afterPos, afterPos + 300).match(/>\s*([^\n<]+)/);
     const snippet = snippetMatch ? snippetMatch[1].trim() : undefined;
 
     sources.push({
@@ -56,24 +67,53 @@ function parseMessageContent(rawContent: string): { mainText: string; sources: P
     });
   }
 
-  return { mainText, sources };
+  // Extract memory sources
+  const memories: ParsedMemorySource[] = [];
+  if (memDetailsIndex !== -1) {
+    const memPart = rawContent.slice(memDetailsIndex);
+    const memRegex = /\d+\.\s+\*\*([^*]+)\*\*(?:\s*—\s*\*([^*]+)\*)?/g;
+    let mMatch;
+    while ((mMatch = memRegex.exec(memPart)) !== null) {
+      const docName = mMatch[1].trim();
+      const section = (mMatch[2] || 'General').trim();
+      const afterPos = mMatch.index + mMatch[0].length;
+      const snippetMatch = memPart.slice(afterPos, afterPos + 300).match(/>\s*([^\n<]+)/);
+      const snippet = snippetMatch ? snippetMatch[1].trim() : undefined;
+
+      memories.push({
+        docName,
+        section,
+        snippet
+      });
+    }
+  }
+
+  return { mainText, sources, memories };
 }
 
 const AssistantMessageBubble: React.FC<{ content: string; time?: string; isGenerating?: boolean }> = ({ content, time, isGenerating }) => {
   const [sourcesOpen, setSourcesOpen] = useState(true);
-  const { mainText, sources } = parseMessageContent(content);
+  const [memoriesOpen, setMemoriesOpen] = useState(true);
+  const { mainText, sources, memories } = parseMessageContent(content);
   const hasSources = sources.length > 0;
+  const hasMemories = memories.length > 0;
 
   return (
     <div className="max-w-[85%] rounded-2xl p-4 text-xs sm:text-sm leading-relaxed bg-slate-900/90 text-slate-200 border border-slate-800 shadow-md rounded-tl-sm space-y-2">
       <div className="flex items-center justify-between text-[10px] text-slate-400 pb-1 border-b border-slate-800/80">
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
           <span className="font-semibold text-slate-300">Noora AI</span>
-          {hasSources ? (
+          {hasMemories && (
+            <span className="px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-400 border border-violet-500/30 text-[10px] font-medium flex items-center gap-1">
+              <i className="bx bx-brain"></i> Learned Memory Augmented
+            </span>
+          )}
+          {hasSources && (
             <span className="px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-[10px] font-medium flex items-center gap-1">
               <i className="bx bx-globe"></i> Live Web Verified
             </span>
-          ) : (
+          )}
+          {!hasMemories && !hasSources && (
             <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[10px] font-medium flex items-center gap-1">
               <i className="bx bx-chip"></i> Direct Neural Knowledge
             </span>
@@ -82,7 +122,7 @@ const AssistantMessageBubble: React.FC<{ content: string; time?: string; isGener
         <span>{time}</span>
       </div>
 
-      {/* Main Response Text with Rich Markdown (Bold, Italic, Code, Lists) */}
+      {/* Main Response Text with Rich Markdown */}
       <div className="font-sans text-slate-200 text-xs sm:text-sm">
         {mainText ? (
           <MarkdownRenderer content={mainText} />
@@ -95,6 +135,54 @@ const AssistantMessageBubble: React.FC<{ content: string; time?: string; isGener
           <MarkdownRenderer content={content} />
         ) : null}
       </div>
+
+      {/* Collapsible & Expandable Learned AI Memory Section */}
+      {hasMemories && (
+        <div className="mt-3 pt-3 border-t border-slate-800">
+          <div className="rounded-xl border border-violet-500/30 bg-slate-950/70 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setMemoriesOpen(!memoriesOpen)}
+              className="w-full px-3 py-2 bg-slate-900/80 hover:bg-slate-900 flex items-center justify-between text-xs font-semibold text-violet-300 transition-colors cursor-pointer"
+            >
+              <div className="flex items-center space-x-2">
+                <i className="bx bx-brain text-violet-400 text-sm"></i>
+                <span>Learned AI Memory & Trained Knowledge</span>
+                <span className="px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-300 text-[10px] font-mono">
+                  {memories.length} citations
+                </span>
+              </div>
+              <div className="flex items-center space-x-1 text-[11px] text-slate-400">
+                <span>{memoriesOpen ? 'Hide Memory' : 'Expand Memory'}</span>
+                <i className={`bx ${memoriesOpen ? 'bx-chevron-up' : 'bx-chevron-down'} text-base`}></i>
+              </div>
+            </button>
+
+            {memoriesOpen && (
+              <div className="p-3 space-y-2 border-t border-slate-800/80">
+                {memories.map((m, mIdx) => (
+                  <div key={mIdx} className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800/90 space-y-1 hover:border-violet-500/40 transition-colors">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold text-violet-300 flex items-center gap-1.5 truncate">
+                        <i className="bx bx-file text-[11px] text-slate-400"></i>
+                        <span className="truncate">{m.docName}</span>
+                      </div>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700 shrink-0 font-mono">
+                        {m.section}
+                      </span>
+                    </div>
+                    {m.snippet && (
+                      <p className="text-[11px] text-slate-400 leading-relaxed pl-2 border-l-2 border-violet-500/40">
+                        {m.snippet}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Collapsible & Expandable Web Sources Section */}
       {hasSources && (

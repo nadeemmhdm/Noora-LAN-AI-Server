@@ -22,7 +22,9 @@ from backend.database import (
     init_db, get_db_connection, verify_api_key, generate_api_key,
     get_active_working_key, resolve_model_filename, log_api_request, log_system_event,
     is_ip_blocked, set_ip_blocked_status, get_server_setting,
-    update_server_setting, prune_old_logs
+    update_server_setting, prune_old_logs,
+    get_all_knowledge_documents, get_knowledge_document,
+    get_chunks_by_document, delete_knowledge_document
 )
 from backend.inference import engine
 from backend.network_utils import (
@@ -33,6 +35,10 @@ from backend.web_search import (
     check_internet_connectivity, perform_web_search, should_trigger_web_search,
     format_search_context, format_collapsible_sources_markdown, analyze_search_intent,
     is_datetime_query, get_datetime_search_data
+)
+from backend.knowledge import (
+    analyze_and_train_markdown, search_knowledge_memory, format_knowledge_context,
+    format_collapsible_memory_markdown
 )
 
 # Initialize Database on startup
@@ -152,6 +158,15 @@ class SettingsUpdateRequest(BaseModel):
     rate_limit_default_rpm: Optional[str] = None
     dark_mode: Optional[str] = None
     enable_web_search: Optional[str] = None
+
+class KnowledgeUploadTextRequest(BaseModel):
+    filename: str
+    content: str
+
+class KnowledgeQueryRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = 3
+    min_score: Optional[float] = 0.5
     web_search_mode: Optional[str] = None
     web_search_max_results: Optional[str] = None
 
@@ -891,6 +906,19 @@ async def chat_completions(
     else:
         log_system_event("INFO", "INFERENCE", f"AI Mode decided direct neural answer without web search. Reason: {intent_analysis.get('reason', 'direct knowledge')}")
 
+    # ---------------- AI Trained Knowledge Memory Retrieval ----------------
+    memory_sources = []
+    if latest_user_text:
+        try:
+            matched_chunks = search_knowledge_memory(latest_user_text, top_k=2)
+            if matched_chunks:
+                memory_sources = matched_chunks
+                knowledge_context = format_knowledge_context(matched_chunks)
+                messages_payload[0]["content"] += f"\n\n{knowledge_context}"
+                log_system_event("INFO", "KNOWLEDGE", f"Applied {len(matched_chunks)} trained knowledge memory chunks for: '{latest_user_text[:50]}'")
+        except Exception as e:
+            log_system_event("WARN", "KNOWLEDGE", f"Knowledge memory lookup warning: {str(e)}")
+
     # Context Guardrail: Prevent exceed_context_size_error on big questions
     # Estimate token count (~3.5 chars per token)
     total_estimated_tokens = sum(len(m["content"]) for m in messages_payload) // 3.5
@@ -938,16 +966,22 @@ async def chat_completions(
                             return
                         async for line in resp.aiter_lines():
                             if line:
-                                if line.startswith("data: ") and line.strip().endswith("[DONE]") and search_sources:
-                                    sources_text = format_collapsible_sources_markdown(search_sources)
-                                    source_chunk = {
-                                        "choices": [{
-                                            "delta": {"content": sources_text},
-                                            "index": 0,
-                                            "finish_reason": None
-                                        }]
-                                    }
-                                    yield f"data: {json.dumps(source_chunk)}\n\n"
+                                if line.startswith("data: ") and line.strip().endswith("[DONE]"):
+                                    appended_blocks = []
+                                    if memory_sources:
+                                        appended_blocks.append(format_collapsible_memory_markdown(memory_sources))
+                                    if search_sources:
+                                        appended_blocks.append(format_collapsible_sources_markdown(search_sources))
+
+                                    if appended_blocks:
+                                        source_chunk = {
+                                            "choices": [{
+                                                "delta": {"content": "\n".join(appended_blocks)},
+                                                "index": 0,
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        yield f"data: {json.dumps(source_chunk)}\n\n"
                                 yield f"{line}\n\n"
                                 if line.startswith("data: ") and not line.strip().endswith("[DONE]"):
                                     try:
@@ -988,11 +1022,16 @@ async def chat_completions(
 
                 # Set model name and attach sources in response
                 data["model"] = target_model_info["name"] if target_model_info else "Noora N.1 Faster"
+                appended_texts = []
+                if memory_sources:
+                    data["knowledge_memory"] = memory_sources
+                    appended_texts.append(format_collapsible_memory_markdown(memory_sources))
                 if search_sources:
                     data["sources"] = search_sources
-                    sources_text = format_collapsible_sources_markdown(search_sources)
-                    if data.get("choices") and len(data["choices"]) > 0:
-                        data["choices"][0]["message"]["content"] += sources_text
+                    appended_texts.append(format_collapsible_sources_markdown(search_sources))
+
+                if appended_texts and data.get("choices") and len(data["choices"]) > 0:
+                    data["choices"][0]["message"]["content"] += "\n" + "\n".join(appended_texts)
 
                 log_api_request(
                     client_ip, "/v1/chat/completions", "POST", 200, latency_ms,
@@ -1351,6 +1390,83 @@ async def update_settings(payload: SettingsUpdateRequest):
         if v is not None:
             update_server_setting(k, str(v))
     return {"success": True, "message": "Settings updated."}
+
+# ----------------- AI Training & Knowledge Memory Endpoints -----------------
+
+@app.post("/api/knowledge/upload")
+async def upload_knowledge_payload(request: Request):
+    """
+    Accepts JSON body: { "filename": "example.md", "content": "# My Doc..." }
+    Or raw text / markdown body.
+    """
+    content_type = request.headers.get("content-type", "")
+    filename = request.query_params.get("filename", "uploaded_knowledge.md")
+    
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            filename = body.get("filename", filename)
+            content = body.get("content", "")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON format.")
+    else:
+        raw_bytes = await request.body()
+        try:
+            content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            content = raw_bytes.decode("latin-1", errors="replace")
+            
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="Document content cannot be empty.")
+        
+    result = analyze_and_train_markdown(filename, content)
+    log_system_event("INFO", "KNOWLEDGE", f"Trained document '{filename}' ({result['chunk_count']} chunks, {result['word_count']} words)")
+    return result
+
+@app.post("/api/knowledge/train-text")
+async def train_knowledge_text(payload: KnowledgeUploadTextRequest):
+    if not payload.content.strip():
+        raise HTTPException(status_code=400, detail="Content cannot be empty.")
+    result = analyze_and_train_markdown(payload.filename, payload.content)
+    log_system_event("INFO", "KNOWLEDGE", f"Trained direct text '{payload.filename}' ({result['chunk_count']} chunks, {result['word_count']} words)")
+    return result
+
+@app.get("/api/knowledge/documents")
+async def list_knowledge_documents():
+    docs = get_all_knowledge_documents()
+    total_chunks = sum(d.get("chunk_count", 0) for d in docs)
+    total_words = sum(d.get("word_count", 0) for d in docs)
+    return {
+        "documents": docs,
+        "total": len(docs),
+        "total_chunks": total_chunks,
+        "total_words": total_words
+    }
+
+@app.get("/api/knowledge/documents/{doc_id}")
+async def get_knowledge_doc_details(doc_id: int):
+    doc = get_knowledge_document(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    chunks = get_chunks_by_document(doc_id)
+    return {"document": doc, "chunks": chunks}
+
+@app.delete("/api/knowledge/documents/{doc_id}")
+async def remove_knowledge_document(doc_id: int):
+    deleted = delete_knowledge_document(doc_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Knowledge document not found")
+    log_system_event("INFO", "KNOWLEDGE", f"Deleted knowledge document #{doc_id}")
+    return {"success": True, "message": "Knowledge document and associated memory chunks deleted successfully."}
+
+@app.post("/api/knowledge/query")
+async def test_knowledge_query(payload: KnowledgeQueryRequest):
+    matches = search_knowledge_memory(payload.query, top_k=payload.top_k or 3, min_score=payload.min_score or 0.5)
+    return {
+        "query": payload.query,
+        "matches": matches,
+        "count": len(matches)
+    }
 
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")

@@ -133,3 +133,53 @@ export interface ConnectivityStatus {
   web_search_enabled: boolean;
   web_search_mode: string;
 }
+
+export interface KnowledgeDocument {
+  id: number;
+  filename: string;
+  title: string;
+  summary: string;
+  word_count: number;
+  chunk_count: number;
+  file_size_bytes: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface KnowledgeChunk {
+  id: number;
+  doc_id: number;
+  section_title: string;
+  chunk_index: number;
+  content: string;
+  keywords: string;
+  created_at: number;
+}
+
+export interface KnowledgeSearchResult {
+  doc_id: number;
+  filename: string;
+  doc_title: string;
+  section_title: string;
+  chunk_index: number;
+  content: string;
+  score: number;
+}
+
+export interface KnowledgeListResponse {
+  documents: KnowledgeDocument[];
+  total: number;
+  total_chunks: number;
+  total_words: number;
+}
+
+export interface KnowledgeTrainResult {
+  doc_id: number;
+  filename: string;
+  title: string;
+  summary: string;
+  word_count: number;
+  chunk_count: number;
+  file_size_bytes: number;
+  chunks_saved: number;
+}
