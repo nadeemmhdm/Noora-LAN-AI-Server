@@ -329,6 +329,56 @@ INTENT_SEARCH_PATTERNS = [
     r"\b(latest\s+(version|release|update)|release\s+date\s+of|has\s+.+\s+been\s+released|new\s+features\s+in|changelog)\b"
 ]
 
+def is_greeting_or_identity(prompt: str) -> bool:
+    """Detects greetings, pleasantries, small talk, and identity queries that need zero web search."""
+    if not prompt:
+        return False
+    p = prompt.lower().strip()
+    p_clean = re.sub(r"[^\w\s]", "", p).strip()
+
+    exact_greetings = {
+        "hi", "hello", "hey", "good morning", "goodmorning", "good afternoon", "goodafternoon",
+        "good evening", "goodevening", "good night", "goodnight", "howdy", "greetings",
+        "how are you", "how r u", "whats up", "what is up", "yo", "sup",
+        "who are you", "who r u", "who developed you", "who made you", "who is nadeem",
+        "who is noora", "tell me a joke", "thank you", "thanks", "bye", "goodbye",
+        "morning", "evening", "afternoon", "hi there", "hello there"
+    }
+    if p_clean in exact_greetings:
+        return True
+
+    # Common greeting prefixes (e.g., "hello noora", "good morning how can you help me")
+    if re.search(r"^(hi|hello|hey|howdy|greetings|good\s*morning|good\s*afternoon|good\s*evening|good\s*night)\b", p_clean):
+        # Unless user explicitly asked to search or asked for live data
+        if not re.search(r"\b(search\s+online|search\s+the\s+web|latest\s+news|stock\s+price|weather\s+in|president\s+of|today\s*date|current\s*time)\b", p_clean):
+            return True
+
+    # Direct identity questions
+    if re.search(r"^(who\s+(are\s+you|created\s+you|made\s+you|trained\s+you|developed\s+you)|what\s+is\s+your\s+name|what\s+can\s+you\s+do|introduce\s+yourself)\b", p_clean):
+        return True
+
+    return False
+
+def is_coding_or_math_query(prompt: str) -> bool:
+    """Detects coding, programming, syntax, and math questions answerable directly from model knowledge."""
+    if not prompt:
+        return False
+    p = prompt.lower().strip()
+
+    # If prompt explicitly asks for web search or current version releases in 2024-2030, don't treat as pure coding
+    if re.search(r"\b(search\s+online|search\s+the\s+web|find\s+online|latest\s+version|release\s+date|newest\s+features\s+in\s+202[4-9])\b", p):
+        return False
+
+    # Any query asking for code, scripts, functions, or algorithms
+    if re.search(r"\b(code|script|function|program|algorithm|syntax|debug|refactor|regex|component|class|method)\b", p):
+        return True
+
+    # Any query mentioning programming languages (handles 'pyhton' and 'python')
+    if re.search(r"\b(py[ht]+on|javascript|typescript|c\+\+|c#|java|rust|golang|html|css|sql|bash|powershell)\b", p):
+        return True
+
+    return False
+
 def analyze_search_intent(prompt: str) -> Dict[str, Any]:
     """
     Intelligently analyzes the user's prompt to determine whether web search is necessary.
@@ -344,7 +394,15 @@ def analyze_search_intent(prompt: str) -> Dict[str, Any]:
     p = prompt.strip()
     p_lower = p.lower()
 
-    # Rule 1: Explicit search commands ALWAYS trigger web search (e.g. "search online for python syntax")
+    # Rule 1: Greetings, pleasantries & AI identity NEVER trigger web search
+    if is_greeting_or_identity(p):
+        return {
+            "needs_search": False,
+            "reason": "Greeting, pleasantry, or AI identity answerable directly without search",
+            "category": "greeting_identity"
+        }
+
+    # Rule 2: Explicit search commands ALWAYS trigger web search (e.g. "search online for python syntax")
     if re.search(r"\b(search\s+(the\s+)?web|search\s+online|find\s+online|look\s+up\s+online|browse\s+(the\s+)?web)\b", p_lower):
         return {
             "needs_search": True,
@@ -352,7 +410,15 @@ def analyze_search_intent(prompt: str) -> Dict[str, Any]:
             "category": "explicit_search"
         }
 
-    # Rule 2: Check exclusions (greetings, simple questions, coding, pure math, timeless knowledge)
+    # Rule 3: Coding, scripting, algorithms, and syntax queries NEVER trigger web search
+    if is_coding_or_math_query(p):
+        return {
+            "needs_search": False,
+            "reason": "Programming or coding question answerable directly from neural weights",
+            "category": "coding_math"
+        }
+
+    # Rule 4: Check standard exclusions (math, summarization, timeless science concepts)
     for pattern in EXCLUSION_PATTERNS:
         if re.search(pattern, p_lower):
             return {
@@ -361,7 +427,7 @@ def analyze_search_intent(prompt: str) -> Dict[str, Any]:
                 "category": "direct_knowledge"
             }
 
-    # Rule 3: Check positive temporal and live-data intent triggers
+    # Rule 5: Check positive temporal and live-data intent triggers
     for pattern in INTENT_SEARCH_PATTERNS:
         if re.search(pattern, p_lower):
             return {
