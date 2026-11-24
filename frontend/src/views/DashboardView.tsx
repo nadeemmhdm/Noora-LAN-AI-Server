@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { ServerStatus, ApiKeyItem } from '../types';
 import { api } from '../services/api';
+import { MarkdownRenderer } from '../components/MarkdownRenderer';
 
 interface DashboardViewProps {
   status: ServerStatus | null;
@@ -378,12 +379,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({ status, refreshSta
         )}
 
         {testResponse && (
-          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-200 text-sm font-sans whitespace-pre-wrap leading-relaxed">
+          <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-200 text-sm font-sans leading-relaxed">
             <div className="flex items-center space-x-2 mb-2 text-xs font-semibold text-indigo-400">
               <i className="bx bx-bot"></i>
               <span>Noora AI Response:</span>
             </div>
-            {testResponse}
+            <MarkdownRenderer content={testResponse} />
           </div>
         )}
       </div>

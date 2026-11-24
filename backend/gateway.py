@@ -31,7 +31,8 @@ from backend.network_utils import (
 from backend.firewall import check_firewall_rule, add_firewall_rule, remove_firewall_rule
 from backend.web_search import (
     check_internet_connectivity, perform_web_search, should_trigger_web_search,
-    format_search_context, format_collapsible_sources_markdown, analyze_search_intent
+    format_search_context, format_collapsible_sources_markdown, analyze_search_intent,
+    is_datetime_query, get_datetime_search_data
 )
 
 # Initialize Database on startup
@@ -804,7 +805,18 @@ async def chat_completions(
             log_api_request(client_ip, "/v1/chat/completions", "POST", 503, 0.0, api_key_name=auth["name"], error_message=s_msg)
             raise HTTPException(status_code=503, detail=f"AI Server failed to launch model: {s_msg}")
 
-    # Prepare messages & inject identity
+    # Prepare messages & inject identity with real-time clock anchor
+    import datetime
+    now_dt = datetime.datetime.now()
+    cur_date_str = now_dt.strftime("%A, %B %d, %Y")
+    cur_time_str = now_dt.strftime("%I:%M %p")
+    temporal_anchor = (
+        f"\n[Real-Time Clock & Calendar Data: Today is {cur_date_str}. Current local system time is {cur_time_str}. "
+        f"Whenever asked about today's date, the current day, or current time, state these exact values clearly. "
+        f"CRITICAL: Never output template placeholders like '[current date and time]' or '[current name of the current president]'. "
+        f"Always provide real names, factual numbers, and direct answers.]"
+    )
+
     messages_payload = []
     has_system = False
     for m in req.messages:
@@ -812,7 +824,7 @@ async def chat_completions(
             has_system = True
             messages_payload.append({
                 "role": "system",
-                "content": f"{m.content}\n[Identity: You are {AI_NAME}, an intelligent, fast, and helpful AI assistant powered by Noora N.1, developed and trained by {DEVELOPER}.]"
+                "content": f"{m.content}\n[Identity: You are {AI_NAME}, an intelligent, fast, and helpful AI assistant powered by Noora N.1, developed and trained by {DEVELOPER}.]{temporal_anchor}"
             })
         else:
             messages_payload.append({"role": m.role, "content": m.content})
@@ -820,7 +832,7 @@ async def chat_completions(
     if not has_system:
         messages_payload.insert(0, {
             "role": "system",
-            "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant powered by Noora N.1. Developed and trained by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency."
+            "content": f"You are {AI_NAME}, an intelligent, helpful, and courteous local AI assistant powered by Noora N.1. Developed and trained by {DEVELOPER}. You run 100% locally on this Windows machine with absolute privacy and high efficiency.{temporal_anchor}"
         })
 
     # ---------------- Intelligent AI-Powered Web Search Determination ----------------
@@ -855,7 +867,15 @@ async def chat_completions(
             perform_search = intent_analysis["needs_search"]
 
     search_sources = []
-    if perform_search and latest_user_text:
+    # Fast-path 1: Date & Time Queries (Always accurate, zero external lag)
+    if is_datetime_query(latest_user_text):
+        dt_data = get_datetime_search_data()
+        search_sources = dt_data["results"]
+        web_context = format_search_context(dt_data)
+        messages_payload[0]["content"] += f"\n\n{web_context}"
+        log_system_event("INFO", "WEB_SEARCH", f"Supplied live authoritative date/time for: '{latest_user_text[:50]}'")
+    # Fast-path 2: Live Web Search
+    elif perform_search and latest_user_text:
         online, _ = check_internet_connectivity()
         if online:
             log_system_event("INFO", "WEB_SEARCH", f"AI triggered live web search ({intent_analysis.get('reason', 'real-time fact')}) for: '{latest_user_text[:60]}'")

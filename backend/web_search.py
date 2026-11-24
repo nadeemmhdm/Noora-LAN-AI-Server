@@ -180,8 +180,17 @@ def search_duckduckgo_api(query: str) -> List[Dict[str, str]]:
         pass
     return results
 
+TYPO_FIXES = {
+    r"\binda\b": "India",
+    r"\bindai\b": "India",
+    r"\bpresidant\b": "president",
+    r"\bpresedent\b": "president",
+    r"\bminiter\b": "minister",
+    r"\bcurren\b": "current",
+}
+
 def clean_search_query(prompt: str) -> str:
-    """Strips conversational prefixes so the search query is focused and effective."""
+    """Strips conversational prefixes and normalizes common typos so the search query is focused and effective."""
     if not prompt:
         return ""
     p = prompt.strip()
@@ -192,10 +201,29 @@ def clean_search_query(prompt: str) -> str:
         r"^what\s+is\s+the\s+latest\s+(news\s+|updates?\s+)?(on|about)?\s*",
         r"^what\s+are\s+the\s+latest\s+news\s+(on|about)?\s*",
         r"^look\s+up\s*",
-        r"^browse\s+for\s*"
+        r"^browse\s+for\s*",
+        r"\bplease\b"
     ]
     for pattern in prefixes:
         p = re.sub(pattern, "", p, flags=re.IGNORECASE).strip()
+
+    for typo_pattern, replacement in TYPO_FIXES.items():
+        p = re.sub(typo_pattern, replacement, p, flags=re.IGNORECASE)
+
+    # Normalize leader/officeholder queries for search engines (e.g. "current president of India" -> "who is the President of India")
+    p = re.sub(
+        r"^(who\s+is\s+)?(the\s+)?current\s+(president|prime\s+minister|pm|ceo|governor|chief\s+minister|cm|monarch|king|queen)\s+of\s+",
+        r"who is the \3 of ",
+        p,
+        flags=re.IGNORECASE
+    )
+    p = re.sub(
+        r"^current\s+(president|prime\s+minister|pm|ceo|governor|chief\s+minister|cm|monarch|king|queen)\s+of\s+",
+        r"who is the \1 of ",
+        p,
+        flags=re.IGNORECASE
+    )
+
     return p if len(p) > 2 else prompt
 
 def perform_web_search(query: str, max_results: int = 4) -> Dict[str, Any]:
@@ -272,8 +300,15 @@ INTENT_SEARCH_PATTERNS = [
     # Explicit search instructions
     r"\b(search\s+(the\s+)?web|search\s+online|find\s+online|google|browse\s+(the\s+)?web|look\s+up\s+online)\b",
 
-    # Temporal anchors (Today, recent, latest, upcoming)
-    r"\b(today|yesterday|tonight|this\s+week|this\s+month|this\s+year|right\s+now|currently|at\s+present|at\s+the\s+moment|recent(ly)?|latest|newest|upcoming)\b",
+    # Temporal anchors (Today, current, recent, latest, upcoming)
+    r"\b(current|currently|presently|today|yesterday|tonight|this\s+week|this\s+month|this\s+year|right\s+now|at\s+present|at\s+the\s+moment|recent(ly)?|latest|newest|upcoming)\b",
+
+    # Date and time queries
+    r"\b(today('?s)?\s+date|date\s+please|what\s+is\s+(the\s+)?(date|time|day)|current\s+(date|time)|time\s+now|date\s+today|what\s+day\s+is\s+(it|today)|what\s+is\s+today)\b",
+
+    # Current officeholders, political leaders, corporate heads, sports captains
+    r"\b(current\s+)?(president|prime\s+minister|pm|ceo|governor|chief\s+minister|cm|chancellor|pope|king|queen|monarch|head\s+of\s+state|vice\s+president|defense\s+minister|cabinet\s+minister|foreign\s+minister)\b",
+    r"\bwho\s+(is|are|was|currently\s+is|leads?)\b",
 
     # Recent / future years referencing live events or versions (2024 through 2030)
     r"\b(202[4-9]|203[0-9])\b",
@@ -289,9 +324,6 @@ INTENT_SEARCH_PATTERNS = [
 
     # Sports matches, scores, champions, tournaments
     r"\b(match\s+score|who\s+won|score\s+of|game\s+score|championship\s+winner|world\s+cup|fifa|ipl|nba|nfl|super\s+bowl|premier\s+league|tournament|standings?)\b",
-
-    # Current officeholders, political leaders, corporate heads
-    r"\b(who\s+is\s+(the\s+)?(current\s+)?(president|prime\s+minister|ceo|governor|mayor|chancellor|pope|king|queen|head\s+of))\b",
 
     # Software versions, model releases, product launch dates
     r"\b(latest\s+(version|release|update)|release\s+date\s+of|has\s+.+\s+been\s+released|new\s+features\s+in|changelog)\b"
@@ -384,8 +416,54 @@ def format_collapsible_sources_markdown(sources: List[Dict[str, str]]) -> str:
     ])
     return "\n".join(lines)
 
+def is_datetime_query(prompt: str) -> bool:
+    """Checks if the user is asking for the current date, time, or day."""
+    if not prompt:
+        return False
+    p = prompt.lower().strip()
+    return bool(re.search(
+        r"\b(today('?s)?\s+date|date\s+please|what\s+is\s+(the\s+)?(date|time|day)|current\s+(date|time)|time\s+now|date\s+today|what\s+day\s+is\s+(it|today)|what\s+is\s+today|time\s+please)\b",
+        p
+    ))
+
+def get_datetime_search_data() -> Dict[str, Any]:
+    """Provides instant, 100% authoritative date and time data without external web scraping lag."""
+    import datetime
+    now_dt = datetime.datetime.now()
+    formatted_date = now_dt.strftime("%A, %B %d, %Y")
+    formatted_time = now_dt.strftime("%I:%M %p")
+    return {
+        "online": True,
+        "query": "current date and time",
+        "results": [
+            {
+                "title": f"Current Date: {formatted_date}",
+                "url": "https://time.is",
+                "source": "Local System Clock",
+                "snippet": f"Today is {formatted_date}. Current local time is {formatted_time}."
+            }
+        ],
+        "count": 1,
+        "is_datetime": True,
+        "formatted_date": formatted_date,
+        "formatted_time": formatted_time
+    }
+
 def format_search_context(search_data: Dict[str, Any]) -> str:
     """Formats retrieved web results into a clean system instruction context."""
+    if search_data.get("is_datetime"):
+        d = search_data["formatted_date"]
+        t = search_data["formatted_time"]
+        return (
+            f"[AUTHORITATIVE REAL-TIME CLOCK & CALENDAR DATA]\n"
+            f"Today's Exact Date: {d}\n"
+            f"Current Local Time: {t}\n"
+            f"Day of Week: {d.split(',')[0]}\n\n"
+            f"Instructions: Answer directly using the exact date and time above. "
+            f"State clearly: 'Today is {d}, and the current time is {t}.' "
+            f"NEVER output template placeholders like '[current date and time]'."
+        )
+
     results = search_data.get("results", [])
     if not results:
         return ""
@@ -408,5 +486,10 @@ def format_search_context(search_data: Dict[str, Any]) -> str:
         lines.append(f"    Summary: {snippet}")
         lines.append("")
 
-    lines.append("Instructions: Synthesize the above live search information to answer the question directly. Cite your sources clearly when referring to facts.")
+    lines.append(
+        "Instructions: Synthesize the above live search information to answer the question directly. "
+        "Cite your sources clearly when referring to facts. "
+        "CRITICAL: Never output template placeholders like '[current name of the current president]' or '[current date and time]'. "
+        "Always output real, factual names and details directly from the search context."
+    )
     return "\n".join(lines)

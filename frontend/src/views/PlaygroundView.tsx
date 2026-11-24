@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { ServerStatus, ModelItem, ApiKeyItem } from '../types';
 import { api } from '../services/api';
+import { MarkdownRenderer } from '../components/MarkdownRenderer';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -81,16 +82,18 @@ const AssistantMessageBubble: React.FC<{ content: string; time?: string; isGener
         <span>{time}</span>
       </div>
 
-      {/* Main Response Text */}
-      <div className="whitespace-pre-wrap font-sans text-slate-200">
-        {mainText || (
-          isGenerating ? (
-            <span className="flex items-center space-x-1.5 text-indigo-400">
-              <i className="bx bx-loader-alt animate-spin text-base"></i>
-              <span>Analyzing question & generating answer on CPU...</span>
-            </span>
-          ) : content
-        )}
+      {/* Main Response Text with Rich Markdown (Bold, Italic, Code, Lists) */}
+      <div className="font-sans text-slate-200 text-xs sm:text-sm">
+        {mainText ? (
+          <MarkdownRenderer content={mainText} />
+        ) : isGenerating ? (
+          <span className="flex items-center space-x-1.5 text-indigo-400 py-1">
+            <i className="bx bx-loader-alt animate-spin text-base"></i>
+            <span>Analyzing question & generating answer on CPU...</span>
+          </span>
+        ) : content ? (
+          <MarkdownRenderer content={content} />
+        ) : null}
       </div>
 
       {/* Collapsible & Expandable Web Sources Section */}
